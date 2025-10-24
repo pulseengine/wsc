@@ -64,3 +64,98 @@ pub enum WSError {
     #[error("Usage error: {0}")]
     UsageError(&'static str),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_display() {
+        // Test basic error messages
+        let err = WSError::ParseError;
+        assert_eq!(err.to_string(), "Parse error");
+
+        let err = WSError::Eof;
+        assert_eq!(err.to_string(), "EOF");
+
+        let err = WSError::UnsupportedModuleType;
+        assert_eq!(err.to_string(), "Unsupported module type");
+
+        let err = WSError::VerificationFailed;
+        assert_eq!(err.to_string(), "No valid signatures");
+
+        let err = WSError::NoSignatures;
+        assert_eq!(err.to_string(), "No signatures found");
+
+        let err = WSError::UnsupportedKeyType;
+        assert_eq!(err.to_string(), "Unsupported key type");
+
+        let err = WSError::InvalidArgument;
+        assert_eq!(err.to_string(), "Invalid argument");
+
+        let err = WSError::IncompatibleSignatureVersion;
+        assert_eq!(err.to_string(), "Incompatible signature version");
+
+        let err = WSError::DuplicateSignature;
+        assert_eq!(err.to_string(), "Duplicate signature");
+
+        let err = WSError::InvalidVerificationPredicate;
+        assert_eq!(
+            err.to_string(),
+            "Sections can only be verified between pre-defined boundaries"
+        );
+
+        let err = WSError::SignatureAlreadyAttached;
+        assert_eq!(err.to_string(), "Signature already attached");
+
+        let err = WSError::DuplicatePublicKey;
+        assert_eq!(err.to_string(), "Duplicate public key");
+
+        let err = WSError::UnknownPublicKey;
+        assert_eq!(err.to_string(), "Unknown public key");
+    }
+
+    #[test]
+    fn test_error_with_params() {
+        let err = WSError::InternalError("test error".to_string());
+        assert_eq!(err.to_string(), "Internal error: [test error]");
+
+        let err = WSError::TooManyHashes(100);
+        assert_eq!(err.to_string(), "Too many hashes (max: 100)");
+
+        let err = WSError::TooManySignatures(50);
+        assert_eq!(err.to_string(), "Too many signatures (max: 50)");
+
+        let err = WSError::UsageError("invalid usage");
+        assert_eq!(err.to_string(), "Usage error: invalid usage");
+
+        let err = WSError::VerificationFailedForPredicates;
+        assert_eq!(
+            err.to_string(),
+            "No valid signatures for the given predicates"
+        );
+    }
+
+    #[test]
+    fn test_error_from_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let err: WSError = io_err.into();
+        assert!(err.to_string().contains("I/O error"));
+    }
+
+    #[test]
+    fn test_error_from_utf8_error() {
+        let invalid_utf8 = vec![0, 159, 146, 150];
+        let utf8_err = std::str::from_utf8(&invalid_utf8).unwrap_err();
+        let err: WSError = utf8_err.into();
+        assert!(err.to_string().contains("UTF-8 error"));
+    }
+
+    #[test]
+    fn test_error_debug() {
+        // Verify Debug trait works
+        let err = WSError::ParseError;
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("ParseError"));
+    }
+}

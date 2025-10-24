@@ -5,7 +5,7 @@ use crate::signature::*;
 use ct_codecs::{Encoder, Hex};
 use std::fmt::{self, Write as _};
 use std::fs::File;
-use std::io::{self, prelude::*, BufReader, BufWriter};
+use std::io::{self, BufReader, BufWriter, prelude::*};
 use std::path::Path;
 use std::str;
 
@@ -445,5 +445,412 @@ impl<'t, T: Read> Iterator for SectionsIterator<'t, T> {
             Ok(None) => None,
             Ok(Some(section)) => Some(Ok(section)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_section_id_from_u8() {
+        assert_eq!(SectionId::from(0), SectionId::CustomSection);
+        assert_eq!(SectionId::from(1), SectionId::Type);
+        assert_eq!(SectionId::from(2), SectionId::Import);
+        assert_eq!(SectionId::from(3), SectionId::Function);
+        assert_eq!(SectionId::from(4), SectionId::Table);
+        assert_eq!(SectionId::from(5), SectionId::Memory);
+        assert_eq!(SectionId::from(6), SectionId::Global);
+        assert_eq!(SectionId::from(7), SectionId::Export);
+        assert_eq!(SectionId::from(8), SectionId::Start);
+        assert_eq!(SectionId::from(9), SectionId::Element);
+        assert_eq!(SectionId::from(10), SectionId::Code);
+        assert_eq!(SectionId::from(11), SectionId::Data);
+        assert_eq!(SectionId::from(99), SectionId::Extension(99));
+    }
+
+    #[test]
+    fn test_section_id_to_u8() {
+        assert_eq!(u8::from(SectionId::CustomSection), 0);
+        assert_eq!(u8::from(SectionId::Type), 1);
+        assert_eq!(u8::from(SectionId::Import), 2);
+        assert_eq!(u8::from(SectionId::Function), 3);
+        assert_eq!(u8::from(SectionId::Table), 4);
+        assert_eq!(u8::from(SectionId::Memory), 5);
+        assert_eq!(u8::from(SectionId::Global), 6);
+        assert_eq!(u8::from(SectionId::Export), 7);
+        assert_eq!(u8::from(SectionId::Start), 8);
+        assert_eq!(u8::from(SectionId::Element), 9);
+        assert_eq!(u8::from(SectionId::Code), 10);
+        assert_eq!(u8::from(SectionId::Data), 11);
+        assert_eq!(u8::from(SectionId::Extension(99)), 99);
+    }
+
+    #[test]
+    fn test_section_id_display() {
+        assert_eq!(SectionId::CustomSection.to_string(), "custom section");
+        assert_eq!(SectionId::Type.to_string(), "types section");
+        assert_eq!(SectionId::Import.to_string(), "imports section");
+        assert_eq!(SectionId::Function.to_string(), "functions section");
+        assert_eq!(SectionId::Table.to_string(), "table section");
+        assert_eq!(SectionId::Memory.to_string(), "memory section");
+        assert_eq!(SectionId::Global.to_string(), "global section");
+        assert_eq!(SectionId::Export.to_string(), "exports section");
+        assert_eq!(SectionId::Start.to_string(), "start section");
+        assert_eq!(SectionId::Element.to_string(), "elements section");
+        assert_eq!(SectionId::Code.to_string(), "code section");
+        assert_eq!(SectionId::Data.to_string(), "data section");
+        assert_eq!(SectionId::Extension(42).to_string(), "section id#42");
+    }
+
+    #[test]
+    fn test_standard_section_new() {
+        let payload = vec![1, 2, 3, 4];
+        let section = StandardSection::new(SectionId::Type, payload.clone());
+        assert_eq!(section.id(), SectionId::Type);
+        assert_eq!(section.payload(), &payload);
+    }
+
+    #[test]
+    fn test_standard_section_display() {
+        let section = StandardSection::new(SectionId::Code, vec![1, 2, 3]);
+        assert_eq!(section.display(false), "code section");
+        assert_eq!(section.display(true), "code section");
+    }
+
+    #[test]
+    fn test_custom_section_new() {
+        let name = "test_section".to_string();
+        let payload = vec![5, 6, 7, 8];
+        let section = CustomSection::new(name.clone(), payload.clone());
+        assert_eq!(section.name(), "test_section");
+        assert_eq!(section.id(), SectionId::CustomSection);
+        assert_eq!(section.payload(), &payload);
+    }
+
+    #[test]
+    fn test_custom_section_display() {
+        let section = CustomSection::new("my_section".to_string(), vec![1, 2, 3]);
+        assert_eq!(section.display(false), "custom section: [my_section]");
+    }
+
+    #[test]
+    fn test_custom_section_outer_payload() {
+        let name = "test".to_string();
+        let payload = vec![1, 2, 3];
+        let section = CustomSection::new(name.clone(), payload.clone());
+
+        let outer = section.outer_payload().unwrap();
+        // Should contain: length of name (varint), name bytes, payload bytes
+        assert!(outer.len() >= name.len() + payload.len());
+    }
+
+    #[test]
+    fn test_section_standard_wrapper() {
+        let std_section = StandardSection::new(SectionId::Memory, vec![9, 10]);
+        let section = Section::Standard(std_section);
+
+        assert_eq!(section.id(), SectionId::Memory);
+        assert_eq!(section.payload(), &[9, 10]);
+        assert!(section.display(false).contains("memory"));
+    }
+
+    #[test]
+    fn test_section_custom_wrapper() {
+        let custom_section = CustomSection::new("wrapper_test".to_string(), vec![11, 12]);
+        let section = Section::Custom(custom_section);
+
+        assert_eq!(section.id(), SectionId::CustomSection);
+        assert_eq!(section.payload(), &[11, 12]);
+        assert!(section.display(false).contains("wrapper_test"));
+    }
+
+    #[test]
+    fn test_custom_section_is_signature_header() {
+        let sig_section = CustomSection::new(SIGNATURE_SECTION_HEADER_NAME.to_string(), vec![]);
+        assert!(sig_section.is_signature_header());
+        assert!(!sig_section.is_signature_delimiter());
+
+        let other_section = CustomSection::new("other".to_string(), vec![]);
+        assert!(!other_section.is_signature_header());
+    }
+
+    #[test]
+    fn test_custom_section_is_signature_delimiter() {
+        let delim_section =
+            CustomSection::new(SIGNATURE_SECTION_DELIMITER_NAME.to_string(), vec![]);
+        assert!(delim_section.is_signature_delimiter());
+        assert!(!delim_section.is_signature_header());
+
+        let other_section = CustomSection::new("other".to_string(), vec![]);
+        assert!(!other_section.is_signature_delimiter());
+    }
+
+    #[test]
+    fn test_section_is_signature_methods() {
+        let sig_header = Section::Custom(CustomSection::new(
+            SIGNATURE_SECTION_HEADER_NAME.to_string(),
+            vec![],
+        ));
+        assert!(sig_header.is_signature_header());
+        assert!(!sig_header.is_signature_delimiter());
+
+        let sig_delim = Section::Custom(CustomSection::new(
+            SIGNATURE_SECTION_DELIMITER_NAME.to_string(),
+            vec![],
+        ));
+        assert!(sig_delim.is_signature_delimiter());
+        assert!(!sig_delim.is_signature_header());
+
+        let std_section = Section::Standard(StandardSection::new(SectionId::Code, vec![]));
+        assert!(!std_section.is_signature_header());
+        assert!(!std_section.is_signature_delimiter());
+    }
+
+    #[test]
+    fn test_module_default() {
+        let module = Module::default();
+        assert_eq!(module.header, [0; 8]);
+        assert_eq!(module.sections.len(), 0);
+    }
+
+    #[test]
+    fn test_module_deserialize_invalid_header() {
+        let bad_header = vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+        let mut reader = io::Cursor::new(bad_header);
+        let result = Module::deserialize(&mut reader);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            WSError::UnsupportedModuleType
+        ));
+    }
+
+    #[test]
+    fn test_module_deserialize_wasm_header() {
+        let data = WASM_HEADER.to_vec();
+        // Add empty module (no sections)
+        let mut reader = io::Cursor::new(data);
+        let result = Module::deserialize(&mut reader);
+        assert!(result.is_ok());
+        let module = result.unwrap();
+        assert_eq!(module.header, WASM_HEADER);
+    }
+
+    #[test]
+    fn test_module_deserialize_component_header() {
+        let data = WASM_COMPONENT_HEADER.to_vec();
+        // Add empty module (no sections)
+        let mut reader = io::Cursor::new(data);
+        let result = Module::deserialize(&mut reader);
+        assert!(result.is_ok());
+        let module = result.unwrap();
+        assert_eq!(module.header, WASM_COMPONENT_HEADER);
+    }
+
+    #[test]
+    fn test_module_serialize_roundtrip() {
+        // Create a simple module
+        let module = Module {
+            header: WASM_HEADER,
+            sections: vec![],
+        };
+
+        // Serialize it
+        let mut buffer = Vec::new();
+        module.serialize(&mut buffer).unwrap();
+
+        // Deserialize it back
+        let mut reader = io::Cursor::new(buffer);
+        let module2 = Module::deserialize(&mut reader).unwrap();
+
+        assert_eq!(module2.header, WASM_HEADER);
+        assert_eq!(module2.sections.len(), 0);
+    }
+
+    #[test]
+    fn test_section_display_formats() {
+        let section = Section::Standard(StandardSection::new(SectionId::Export, vec![]));
+        let display = format!("{}", section);
+        assert!(display.contains("exports"));
+
+        let debug = format!("{:?}", section);
+        assert!(debug.contains("exports"));
+    }
+
+    #[test]
+    fn test_section_new_custom() {
+        // Create a custom section with name and payload
+        let mut payload = Vec::new();
+        varint::put(&mut payload, 4u64).unwrap(); // name length
+        payload.extend_from_slice(b"test");
+        payload.extend_from_slice(&[1, 2, 3]);
+
+        let section = Section::new(SectionId::CustomSection, payload).unwrap();
+        if let Section::Custom(custom) = section {
+            assert_eq!(custom.name(), "test");
+            assert_eq!(custom.payload(), &[1, 2, 3]);
+        } else {
+            panic!("Expected custom section");
+        }
+    }
+
+    #[test]
+    fn test_section_new_standard() {
+        let payload = vec![10, 20, 30];
+        let section = Section::new(SectionId::Code, payload.clone()).unwrap();
+        if let Section::Standard(std) = section {
+            assert_eq!(std.id(), SectionId::Code);
+            assert_eq!(std.payload(), &payload);
+        } else {
+            panic!("Expected standard section");
+        }
+    }
+
+    #[test]
+    fn test_section_serialize_standard() {
+        let section = Section::Standard(StandardSection::new(SectionId::Memory, vec![5, 6, 7]));
+        let mut buffer = Vec::new();
+        section.serialize(&mut buffer).unwrap();
+        assert!(!buffer.is_empty());
+    }
+
+    #[test]
+    fn test_section_serialize_custom() {
+        let section = Section::Custom(CustomSection::new("my_custom".to_string(), vec![8, 9]));
+        let mut buffer = Vec::new();
+        section.serialize(&mut buffer).unwrap();
+        assert!(!buffer.is_empty());
+    }
+
+    #[test]
+    fn test_section_deserialize_eof() {
+        let empty_data = vec![];
+        let mut reader = io::Cursor::new(empty_data);
+        let result = Section::deserialize(&mut reader).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_section_deserialize_standard() {
+        // Create a standard section manually
+        let mut data = Vec::new();
+        varint::put(&mut data, u8::from(SectionId::Table) as u64).unwrap();
+        varint::put(&mut data, 3u64).unwrap(); // payload length
+        data.extend_from_slice(&[1, 2, 3]);
+
+        let mut reader = io::Cursor::new(data);
+        let section = Section::deserialize(&mut reader).unwrap().unwrap();
+        assert_eq!(section.id(), SectionId::Table);
+        assert_eq!(section.payload(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn test_section_deserialize_roundtrip() {
+        let original = Section::Standard(StandardSection::new(SectionId::Global, vec![42, 43, 44]));
+        let mut buffer = Vec::new();
+        original.serialize(&mut buffer).unwrap();
+
+        let mut reader = io::Cursor::new(buffer);
+        let deserialized = Section::deserialize(&mut reader).unwrap().unwrap();
+        assert_eq!(deserialized.id(), original.id());
+        assert_eq!(deserialized.payload(), original.payload());
+    }
+
+    #[test]
+    fn test_custom_section_signature_data_invalid() {
+        let custom = CustomSection::new(SIGNATURE_SECTION_HEADER_NAME.to_string(), vec![1, 2, 3]);
+        let result = custom.signature_data();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_custom_section_display_verbose() {
+        let custom = CustomSection::new("verbose_test".to_string(), vec![10, 20]);
+        let display = custom.display(true);
+        assert!(display.contains("verbose_test"));
+    }
+
+    #[test]
+    fn test_custom_section_display_delimiter() {
+        let custom = CustomSection::new(
+            SIGNATURE_SECTION_DELIMITER_NAME.to_string(),
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+        );
+        let display = custom.display(true);
+        assert!(display.contains("delimiter"));
+    }
+
+    #[test]
+    fn test_module_serialize_with_sections() {
+        let module = Module {
+            header: WASM_HEADER,
+            sections: vec![
+                Section::Standard(StandardSection::new(SectionId::Type, vec![1])),
+                Section::Standard(StandardSection::new(SectionId::Function, vec![2])),
+            ],
+        };
+
+        let mut buffer = Vec::new();
+        module.serialize(&mut buffer).unwrap();
+
+        // Should have header + sections
+        assert!(buffer.len() > 8);
+    }
+
+    #[test]
+    fn test_module_deserialize_with_sections() {
+        let mut data = WASM_HEADER.to_vec();
+        // Add a simple Type section
+        varint::put(&mut data, u8::from(SectionId::Type) as u64).unwrap();
+        varint::put(&mut data, 2u64).unwrap();
+        data.extend_from_slice(&[10, 20]);
+
+        let mut reader = io::Cursor::new(data);
+        let module = Module::deserialize(&mut reader).unwrap();
+        assert_eq!(module.sections.len(), 1);
+        assert_eq!(module.sections[0].id(), SectionId::Type);
+    }
+
+    #[test]
+    fn test_module_sections_iterator() {
+        let mut data = WASM_HEADER.to_vec();
+        // Add two sections
+        varint::put(&mut data, u8::from(SectionId::Memory) as u64).unwrap();
+        varint::put(&mut data, 1u64).unwrap();
+        data.push(99);
+
+        varint::put(&mut data, u8::from(SectionId::Global) as u64).unwrap();
+        varint::put(&mut data, 1u64).unwrap();
+        data.push(88);
+
+        let mut reader = io::Cursor::new(&data);
+        let stream = Module::init_from_reader(&mut reader).unwrap();
+        let sections: Vec<_> = Module::iterate(stream).unwrap().collect();
+
+        assert_eq!(sections.len(), 2);
+        assert!(sections[0].is_ok());
+        assert!(sections[1].is_ok());
+    }
+
+    #[test]
+    fn test_section_id_copy() {
+        let id1 = SectionId::Code;
+        let id2 = id1;
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn test_section_extension_id() {
+        let ext_id = SectionId::Extension(42);
+        assert_eq!(u8::from(ext_id), 42);
+        assert_eq!(ext_id, SectionId::from(42));
+    }
+
+    #[test]
+    fn test_custom_section_default() {
+        let custom = CustomSection::default();
+        assert_eq!(custom.name(), "");
+        assert_eq!(custom.payload(), &[]);
     }
 }

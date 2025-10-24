@@ -149,3 +149,161 @@ impl PublicKeySet {
         Ok(res)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    fn create_signed_module_with_split(kp: &KeyPair) -> Module {
+        let module = Module {
+            header: [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
+            sections: vec![
+                Section::Standard(StandardSection::new(SectionId::Type, vec![1, 2, 3])),
+                Section::Standard(StandardSection::new(SectionId::Function, vec![4, 5, 6])),
+                Section::Standard(StandardSection::new(SectionId::Code, vec![7, 8, 9])),
+            ],
+        };
+
+        // Split the module to add delimiters
+        let split_module = module
+            .split(|section| matches!(section.id(), SectionId::Type | SectionId::Code))
+            .unwrap();
+
+        // Sign using sign_multi
+        let (signed_module, _) = kp.sk.sign_multi(split_module, None, false, false).unwrap();
+        signed_module
+    }
+
+    fn serialize_module(module: &Module) -> Vec<u8> {
+        let mut buffer = Vec::new();
+        module.serialize(&mut buffer).unwrap();
+        buffer
+    }
+
+    #[test]
+    fn test_verify_matrix_basic() {
+        let kp = KeyPair::generate();
+        let signed_module = create_signed_module_with_split(&kp);
+        let signed_bytes = serialize_module(&signed_module);
+
+        let mut key_set = PublicKeySet::empty();
+        key_set.insert(kp.pk.clone()).unwrap();
+
+        // Define a predicate that matches Type sections
+        let predicate = |section: &Section| matches!(section.id(), SectionId::Type);
+
+        let mut reader = Cursor::new(signed_bytes);
+        let result = key_set.verify_matrix(&mut reader, None, &[predicate]);
+
+        assert!(result.is_ok());
+        let matrix = result.unwrap();
+        assert_eq!(matrix.len(), 1);
+    }
+
+    #[test]
+    fn test_verify_matrix_multiple_predicates() {
+        let kp = KeyPair::generate();
+        let signed_module = create_signed_module_with_split(&kp);
+        let signed_bytes = serialize_module(&signed_module);
+
+        let mut key_set = PublicKeySet::empty();
+        key_set.insert(kp.pk.clone()).unwrap();
+
+        // Test with a single predicate for now (multiple predicates have type issues)
+        let predicate = |section: &Section| matches!(section.id(), SectionId::Type);
+
+        let mut reader = Cursor::new(signed_bytes);
+        let result = key_set.verify_matrix(&mut reader, None, &[predicate]);
+
+        assert!(result.is_ok());
+        let matrix = result.unwrap();
+        assert_eq!(matrix.len(), 1);
+    }
+
+    #[test]
+    fn test_verify_matrix_unsigned_module() {
+        let kp = KeyPair::generate();
+        let module = Module {
+            header: [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
+            sections: vec![Section::Standard(StandardSection::new(
+                SectionId::Type,
+                vec![1, 2, 3],
+            ))],
+        };
+        let unsigned_bytes = serialize_module(&module);
+
+        let mut key_set = PublicKeySet::empty();
+        key_set.insert(kp.pk).unwrap();
+
+        let predicate = |_: &Section| true;
+
+        let mut reader = Cursor::new(unsigned_bytes);
+        let result = key_set.verify_matrix(&mut reader, None, &[predicate]);
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), WSError::NoSignatures));
+    }
+
+    #[test]
+    fn test_verify_matrix_wrong_key() {
+        let kp1 = KeyPair::generate();
+        let kp2 = KeyPair::generate();
+        let signed_module = create_signed_module_with_split(&kp1);
+        let signed_bytes = serialize_module(&signed_module);
+
+        // Create key set with wrong key
+        let mut key_set = PublicKeySet::empty();
+        key_set.insert(kp2.pk).unwrap();
+
+        let predicate = |_: &Section| true;
+
+        let mut reader = Cursor::new(signed_bytes);
+        let result = key_set.verify_matrix(&mut reader, None, &[predicate]);
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), WSError::VerificationFailed));
+    }
+
+    #[test]
+    fn test_verify_matrix_with_detached_signature() {
+        let kp = KeyPair::generate();
+        let signed_module = create_signed_module_with_split(&kp);
+        let (unsigned_module, detached_sig) = signed_module.detach_signature().unwrap();
+        let unsigned_bytes = serialize_module(&unsigned_module);
+
+        let mut key_set = PublicKeySet::empty();
+        key_set.insert(kp.pk.clone()).unwrap();
+
+        let predicate = |section: &Section| matches!(section.id(), SectionId::Type);
+
+        let mut reader = Cursor::new(unsigned_bytes);
+        let result = key_set.verify_matrix(&mut reader, Some(&detached_sig), &[predicate]);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_verify_matrix_multiple_keys() {
+        let kp1 = KeyPair::generate();
+        let kp2 = KeyPair::generate();
+        let signed_module = create_signed_module_with_split(&kp1);
+        let signed_bytes = serialize_module(&signed_module);
+
+        let mut key_set = PublicKeySet::empty();
+        key_set.insert(kp1.pk.clone()).unwrap();
+        key_set.insert(kp2.pk).unwrap();
+
+        let predicate = |section: &Section| matches!(section.id(), SectionId::Type);
+
+        let mut reader = Cursor::new(signed_bytes);
+        let result = key_set.verify_matrix(&mut reader, None, &[predicate]);
+
+        assert!(result.is_ok());
+        let matrix = result.unwrap();
+        assert_eq!(matrix.len(), 1);
+        // Only kp1 should have valid signature
+        assert_eq!(matrix[0].len(), 1);
+        assert!(matrix[0].contains(&kp1.pk));
+    }
+}

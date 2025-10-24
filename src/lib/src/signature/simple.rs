@@ -227,3 +227,244 @@ impl PublicKeySet {
         Ok(valid_pks)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    fn create_test_module() -> Module {
+        Module {
+            header: [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
+            sections: vec![
+                Section::Standard(StandardSection::new(SectionId::Type, vec![1, 2, 3])),
+                Section::Standard(StandardSection::new(SectionId::Function, vec![4, 5, 6])),
+                Section::Standard(StandardSection::new(SectionId::Code, vec![7, 8, 9])),
+            ],
+        }
+    }
+
+    fn serialize_module(module: &Module) -> Vec<u8> {
+        let mut buffer = Vec::new();
+        module.serialize(&mut buffer).unwrap();
+        buffer
+    }
+
+    #[test]
+    fn test_sign_module() {
+        let kp = KeyPair::generate();
+        let module = create_test_module();
+
+        let signed_module = kp.sk.sign(module, None).unwrap();
+
+        // First section should be signature
+        assert!(signed_module.sections[0].is_signature_header());
+    }
+
+    #[test]
+    fn test_sign_module_with_key_id() {
+        let kp = KeyPair::generate();
+        let module = create_test_module();
+        let key_id = vec![1, 2, 3, 4];
+
+        let signed_module = kp.sk.sign(module, Some(&key_id)).unwrap();
+
+        // Verify signature header exists
+        assert!(signed_module.sections[0].is_signature_header());
+    }
+
+    #[test]
+    fn test_sign_replaces_existing_signature() {
+        let kp = KeyPair::generate();
+        let module = create_test_module();
+
+        // Sign once
+        let signed_module = kp.sk.sign(module, None).unwrap();
+
+        // Sign again - should replace signature
+        let signed_module2 = kp.sk.sign(signed_module, None).unwrap();
+
+        // Should still have only one signature header
+        let sig_headers: Vec<_> = signed_module2
+            .sections
+            .iter()
+            .filter(|s| s.is_signature_header())
+            .collect();
+        assert_eq!(sig_headers.len(), 1);
+    }
+
+    #[test]
+    fn test_verify_signed_module() {
+        let kp = KeyPair::generate();
+        let module = create_test_module();
+
+        let signed_module = kp.sk.sign(module, None).unwrap();
+        let signed_bytes = serialize_module(&signed_module);
+
+        let mut reader = Cursor::new(signed_bytes);
+        let result = kp.pk.verify(&mut reader, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_verify_unsigned_module() {
+        let kp = KeyPair::generate();
+        let module = create_test_module();
+        let unsigned_bytes = serialize_module(&module);
+
+        let mut reader = Cursor::new(unsigned_bytes);
+        let result = kp.pk.verify(&mut reader, None);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), WSError::NoSignatures));
+    }
+
+    #[test]
+    fn test_verify_with_wrong_key() {
+        let kp1 = KeyPair::generate();
+        let kp2 = KeyPair::generate();
+        let module = create_test_module();
+
+        // Sign with key 1
+        let signed_module = kp1.sk.sign(module, None).unwrap();
+        let signed_bytes = serialize_module(&signed_module);
+
+        // Try to verify with key 2
+        let mut reader = Cursor::new(signed_bytes);
+        let result = kp2.pk.verify(&mut reader, None);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), WSError::VerificationFailed));
+    }
+
+    #[test]
+    fn test_verify_with_detached_signature() {
+        let kp = KeyPair::generate();
+        let module = create_test_module();
+
+        // Sign and detach
+        let signed_module = kp.sk.sign(module, None).unwrap();
+        let (unsigned_module, detached_sig) = signed_module.detach_signature().unwrap();
+        let unsigned_bytes = serialize_module(&unsigned_module);
+
+        // Verify with detached signature
+        let mut reader = Cursor::new(unsigned_bytes);
+        let result = kp.pk.verify(&mut reader, Some(&detached_sig));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_public_key_set_verify() {
+        let kp1 = KeyPair::generate();
+        let kp2 = KeyPair::generate();
+        let module = create_test_module();
+
+        // Sign with key 1
+        let signed_module = kp1.sk.sign(module, None).unwrap();
+        let signed_bytes = serialize_module(&signed_module);
+
+        // Create a key set with both keys
+        let mut key_set = PublicKeySet::empty();
+        key_set.insert(kp1.pk.clone()).unwrap();
+        key_set.insert(kp2.pk).unwrap();
+
+        // Verify - should find key 1
+        let mut reader = Cursor::new(signed_bytes);
+        let result = key_set.verify(&mut reader, None);
+        assert!(result.is_ok());
+        let valid_pks = result.unwrap();
+        assert_eq!(valid_pks.len(), 1);
+        assert!(valid_pks.contains(&kp1.pk));
+    }
+
+    #[test]
+    fn test_public_key_set_verify_unsigned() {
+        let kp = KeyPair::generate();
+        let module = create_test_module();
+        let unsigned_bytes = serialize_module(&module);
+
+        let mut key_set = PublicKeySet::empty();
+        key_set.insert(kp.pk).unwrap();
+
+        let mut reader = Cursor::new(unsigned_bytes);
+        let result = key_set.verify(&mut reader, None);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), WSError::NoSignatures));
+    }
+
+    #[test]
+    fn test_public_key_set_verify_no_matching_keys() {
+        let kp1 = KeyPair::generate();
+        let kp2 = KeyPair::generate();
+        let module = create_test_module();
+
+        // Sign with key 1
+        let signed_module = kp1.sk.sign(module, None).unwrap();
+        let signed_bytes = serialize_module(&signed_module);
+
+        // Create key set with only key 2 (different)
+        let mut key_set = PublicKeySet::empty();
+        key_set.insert(kp2.pk).unwrap();
+
+        let mut reader = Cursor::new(signed_bytes);
+        let result = key_set.verify(&mut reader, None);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), WSError::VerificationFailed));
+    }
+
+    #[test]
+    fn test_public_key_set_verify_with_detached_signature() {
+        let kp = KeyPair::generate();
+        let module = create_test_module();
+
+        // Sign and detach
+        let signed_module = kp.sk.sign(module, None).unwrap();
+        let (unsigned_module, detached_sig) = signed_module.detach_signature().unwrap();
+        let unsigned_bytes = serialize_module(&unsigned_module);
+
+        let mut key_set = PublicKeySet::empty();
+        key_set.insert(kp.pk.clone()).unwrap();
+
+        // Verify with detached signature
+        let mut reader = Cursor::new(unsigned_bytes);
+        let result = key_set.verify(&mut reader, Some(&detached_sig));
+        assert!(result.is_ok());
+        let valid_pks = result.unwrap();
+        assert_eq!(valid_pks.len(), 1);
+    }
+
+    #[test]
+    fn test_sign_verify_roundtrip() {
+        let kp = KeyPair::generate();
+        let module = create_test_module();
+
+        // Sign
+        let signed_module = kp.sk.sign(module, None).unwrap();
+
+        // Serialize
+        let signed_bytes = serialize_module(&signed_module);
+
+        // Verify
+        let mut reader = Cursor::new(signed_bytes);
+        let result = kp.pk.verify(&mut reader, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_sign_with_modified_module_fails() {
+        let kp = KeyPair::generate();
+        let module = create_test_module();
+
+        // Sign
+        let signed_module = kp.sk.sign(module, None).unwrap();
+        let mut signed_bytes = serialize_module(&signed_module);
+
+        // Modify the signed bytes (corrupt the module)
+        if signed_bytes.len() > 50 {
+            signed_bytes[50] ^= 0xFF;
+        }
+
+        // Verify should fail
+        let mut reader = Cursor::new(signed_bytes);
+        let result = kp.pk.verify(&mut reader, None);
+        assert!(result.is_err());
+    }
+}

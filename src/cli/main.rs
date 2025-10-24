@@ -4,10 +4,10 @@ use wasmsign2::{
 
 use wasmsign2::reexports::log;
 
-use clap::{crate_description, crate_name, crate_version, Arg, Command};
+use clap::{Arg, Command, crate_description, crate_name, crate_version};
 use regex::RegexBuilder;
 use std::fs::File;
-use std::io::{prelude::*, BufReader};
+use std::io::{BufReader, prelude::*};
 
 fn start() -> Result<(), WSError> {
     let matches = Command::new(crate_name!())
@@ -27,7 +27,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("secret_key_file")
                         .long("--secret-key")
                         .short('k')
-                        
                         .required(true)
                         .help("Secret key file"),
                 )
@@ -36,7 +35,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("public_key_file")
                         .long("--public-key")
                         .short('K')
-                        
                         .required(true)
                         .help("Public key file"),
                 ),
@@ -49,7 +47,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("input_file")
                         .long("--input-file")
                         .short('i')
-                        
                         .required(true)
                         .help("Input file"),
                 ),
@@ -62,7 +59,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("input_file")
                         .long("--input-file")
                         .short('i')
-                        
                         .required(true)
                         .help("Input file"),
                 )
@@ -71,7 +67,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("output_file")
                         .long("--output-file")
                         .short('o')
-                        
                         .required(true)
                         .help("Output file"),
                 )
@@ -80,7 +75,6 @@ fn start() -> Result<(), WSError> {
                         .long("--split")
                         .short('s')
                         .value_name("regex")
-                        
                         .help("Custom section names to be signed"),
                 ),
         )
@@ -92,7 +86,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("input_file")
                         .long("--input-file")
                         .short('i')
-                        
                         .required(true)
                         .help("Input file"),
                 )
@@ -101,7 +94,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("output_file")
                         .long("--output-file")
                         .short('o')
-                        
                         .required(true)
                         .help("Output file"),
                 )
@@ -110,7 +102,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("secret_key_file")
                         .long("--secret-key")
                         .short('k')
-                        
                         .required(true)
                         .help("Secret key file"),
                 )
@@ -119,7 +110,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("public_key_file")
                         .long("--public-key")
                         .short('K')
-                        
                         .help("Public key file"),
                 )
                 .arg(
@@ -133,7 +123,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("signature_file")
                         .long("--signature-file")
                         .short('S')
-                        
                         .help("Signature file"),
                 ),
         )
@@ -145,7 +134,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("input_file")
                         .long("--input-file")
                         .short('i')
-                        
                         .required(true)
                         .help("Input file"),
                 )
@@ -154,7 +142,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("public_key_file")
                         .long("--public-key")
                         .short('K')
-                        
                         .required(false)
                         .help("Public key file"),
                 )
@@ -163,7 +150,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("from_github")
                         .long("--from-github")
                         .short('G')
-                        
                         .required(false)
                         .help("GitHub account to retrieve public keys from"),
                 )
@@ -178,7 +164,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("signature_file")
                         .long("--signature-file")
                         .short('S')
-                        
                         .help("Signature file"),
                 )
                 .arg(
@@ -186,7 +171,6 @@ fn start() -> Result<(), WSError> {
                         .long("--split")
                         .short('s')
                         .value_name("regex")
-                        
                         .help("Custom section names to be verified"),
                 ),
         )
@@ -198,7 +182,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("input_file")
                         .long("--input-file")
                         .short('i')
-                        
                         .required(true)
                         .help("Input file"),
                 )
@@ -207,7 +190,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("output_file")
                         .long("--output-file")
                         .short('o')
-                        
                         .required(true)
                         .help("Output file"),
                 )
@@ -216,7 +198,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("signature_file")
                         .long("--signature-file")
                         .short('S')
-                        
                         .required(true)
                         .help("Signature file"),
                 ),
@@ -229,7 +210,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("input_file")
                         .long("--input-file")
                         .short('i')
-                        
                         .required(true)
                         .help("Input file"),
                 )
@@ -238,7 +218,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("output_file")
                         .long("--output-file")
                         .short('o')
-                        
                         .required(true)
                         .help("Output file"),
                 )
@@ -247,7 +226,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("signature_file")
                         .long("--signature-file")
                         .short('S')
-                        
                         .required(true)
                         .help("Signature file"),
                 ),
@@ -260,7 +238,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("input_file")
                         .long("--input-file")
                         .short('i')
-                        
                         .required(true)
                         .help("Input file"),
                 )
@@ -278,7 +255,6 @@ fn start() -> Result<(), WSError> {
                         .value_name("from_github")
                         .long("--from-github")
                         .short('G')
-                        
                         .required(false)
                         .help("GitHub account to retrieve public keys from"),
                 )
@@ -293,7 +269,6 @@ fn start() -> Result<(), WSError> {
                         .long("--split")
                         .short('s')
                         .value_name("regex")
-                        
                         .help("Custom section names to be verified"),
                 ),
         )
@@ -322,10 +297,12 @@ fn start() -> Result<(), WSError> {
     } else if let Some(matches) = matches.subcommand_matches("keygen") {
         let kp = KeyPair::generate();
         let sk_file = matches
-            .get_one::<String>("secret_key").map(|s| s.as_str())
+            .get_one::<String>("secret_key")
+            .map(|s| s.as_str())
             .ok_or(WSError::UsageError("Missing secret key file"))?;
         let pk_file = matches
-            .get_one::<String>("public_key").map(|s| s.as_str())
+            .get_one::<String>("public_key")
+            .map(|s| s.as_str())
             .ok_or(WSError::UsageError("Missing public key file"))?;
         kp.sk.to_file(sk_file)?;
         println!("Secret key saved to [{sk_file}]");
@@ -368,9 +345,12 @@ fn start() -> Result<(), WSError> {
     } else if let Some(matches) = matches.subcommand_matches("sign") {
         let input_file = matches.get_one::<String>("in").map(|s| s.as_str());
         let output_file = matches.get_one::<String>("out").map(|s| s.as_str());
-        let signature_file = matches.get_one::<String>("signature_file").map(|s| s.as_str());
+        let signature_file = matches
+            .get_one::<String>("signature_file")
+            .map(|s| s.as_str());
         let sk_file = matches
-            .get_one::<String>("secret_key").map(|s| s.as_str())
+            .get_one::<String>("secret_key")
+            .map(|s| s.as_str())
             .ok_or(WSError::UsageError("Missing secret key file"))?;
         let sk = match matches.get_flag("ssh") {
             false => SecretKey::from_file(sk_file)?,
@@ -402,7 +382,9 @@ fn start() -> Result<(), WSError> {
         module.show(verbose)?;
     } else if let Some(matches) = matches.subcommand_matches("verify") {
         let input_file = matches.get_one::<String>("in").map(|s| s.as_str());
-        let signature_file = matches.get_one::<String>("signature_file").map(|s| s.as_str());
+        let signature_file = matches
+            .get_one::<String>("signature_file")
+            .map(|s| s.as_str());
         let splits = matches.get_one::<String>("splits").map(|s| s.as_str());
         let signed_sections_rx = match splits {
             None => None,
@@ -418,11 +400,14 @@ fn start() -> Result<(), WSError> {
                     .map_err(|_| WSError::InvalidArgument)?,
             ),
         };
-        let pk = if let Some(github_account) = matches.get_one::<String>("from_github").map(|s| s.as_str()) {
+        let pk = if let Some(github_account) =
+            matches.get_one::<String>("from_github").map(|s| s.as_str())
+        {
             PublicKey::from_openssh(&get_pks_from_github(github_account)?)?
         } else {
             let pk_file = matches
-                .get_one::<String>("public_key").map(|s| s.as_str())
+                .get_one::<String>("public_key")
+                .map(|s| s.as_str())
                 .ok_or(WSError::UsageError("Missing public key file"))?;
             match matches.get_flag("ssh") {
                 false => PublicKey::from_file(pk_file)?,
@@ -454,7 +439,9 @@ fn start() -> Result<(), WSError> {
     } else if let Some(matches) = matches.subcommand_matches("detach") {
         let input_file = matches.get_one::<String>("in").map(|s| s.as_str());
         let output_file = matches.get_one::<String>("out").map(|s| s.as_str());
-        let signature_file = matches.get_one::<String>("signature_file").map(|s| s.as_str());
+        let signature_file = matches
+            .get_one::<String>("signature_file")
+            .map(|s| s.as_str());
         let input_file = input_file.ok_or(WSError::UsageError("Missing input file"))?;
         let output_file = output_file.ok_or(WSError::UsageError("Missing output file"))?;
         let signature_file =
@@ -467,7 +454,9 @@ fn start() -> Result<(), WSError> {
     } else if let Some(matches) = matches.subcommand_matches("attach") {
         let input_file = matches.get_one::<String>("in").map(|s| s.as_str());
         let output_file = matches.get_one::<String>("out").map(|s| s.as_str());
-        let signature_file = matches.get_one::<String>("signature_file").map(|s| s.as_str());
+        let signature_file = matches
+            .get_one::<String>("signature_file")
+            .map(|s| s.as_str());
         let input_file = input_file.ok_or(WSError::UsageError("Missing input file"))?;
         let output_file = output_file.ok_or(WSError::UsageError("Missing output file"))?;
         let signature_file =
@@ -480,7 +469,9 @@ fn start() -> Result<(), WSError> {
         println!("Signature is now embedded as a custom section.");
     } else if let Some(matches) = matches.subcommand_matches("verify_matrix") {
         let input_file = matches.get_one::<String>("in").map(|s| s.as_str());
-        let signature_file = matches.get_one::<String>("signature_file").map(|s| s.as_str());
+        let signature_file = matches
+            .get_one::<String>("signature_file")
+            .map(|s| s.as_str());
         let splits = matches.get_one::<String>("splits").map(|s| s.as_str());
         let signed_sections_rx = match splits {
             None => None,
@@ -496,7 +487,9 @@ fn start() -> Result<(), WSError> {
                     .map_err(|_| WSError::InvalidArgument)?,
             ),
         };
-        let pks = if let Some(github_account) = matches.get_one::<String>("from_github").map(|s| s.as_str()) {
+        let pks = if let Some(github_account) =
+            matches.get_one::<String>("from_github").map(|s| s.as_str())
+        {
             PublicKeySet::from_openssh(&get_pks_from_github(github_account)?)?
         } else {
             let pk_files = matches

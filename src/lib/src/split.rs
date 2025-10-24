@@ -108,3 +108,193 @@ impl Module {
         Ok(self)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_module() -> Module {
+        Module {
+            header: [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
+            sections: vec![
+                Section::Standard(StandardSection::new(SectionId::Type, vec![1, 2, 3])),
+                Section::Standard(StandardSection::new(SectionId::Function, vec![4, 5, 6])),
+                Section::Standard(StandardSection::new(SectionId::Code, vec![7, 8, 9])),
+            ],
+        }
+    }
+
+    #[test]
+    fn test_detach_signature_no_signatures() {
+        let module = create_test_module();
+        let result = module.detach_signature();
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), WSError::NoSignatures));
+    }
+
+    #[test]
+    fn test_detach_signature_with_signature() {
+        let signature_data = vec![1, 2, 3, 4, 5];
+        let module = Module {
+            header: [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
+            sections: vec![
+                Section::Custom(CustomSection::new(
+                    SIGNATURE_SECTION_HEADER_NAME.to_string(),
+                    signature_data.clone(),
+                )),
+                Section::Standard(StandardSection::new(SectionId::Type, vec![1, 2, 3])),
+                Section::Standard(StandardSection::new(SectionId::Code, vec![4, 5, 6])),
+            ],
+        };
+
+        let result = module.detach_signature();
+        assert!(result.is_ok());
+        let (new_module, detached_sig) = result.unwrap();
+        assert_eq!(detached_sig, signature_data);
+        assert_eq!(new_module.sections.len(), 2);
+        assert!(!new_module.sections[0].is_signature_header());
+    }
+
+    #[test]
+    fn test_attach_signature() {
+        let module = create_test_module();
+        let signature_data = vec![10, 20, 30];
+
+        let result = module.attach_signature(&signature_data);
+        assert!(result.is_ok());
+        let signed_module = result.unwrap();
+
+        // First section should be the signature
+        assert_eq!(signed_module.sections.len(), 4);
+        assert!(signed_module.sections[0].is_signature_header());
+        assert_eq!(signed_module.sections[0].payload(), &signature_data);
+    }
+
+    #[test]
+    fn test_attach_signature_already_signed() {
+        let signature_data = vec![1, 2, 3];
+        let module = Module {
+            header: [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
+            sections: vec![
+                Section::Custom(CustomSection::new(
+                    SIGNATURE_SECTION_HEADER_NAME.to_string(),
+                    signature_data.clone(),
+                )),
+                Section::Standard(StandardSection::new(SectionId::Code, vec![4, 5, 6])),
+            ],
+        };
+
+        let new_signature = vec![7, 8, 9];
+        let result = module.attach_signature(&new_signature);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            WSError::SignatureAlreadyAttached
+        ));
+    }
+
+    #[test]
+    fn test_split_all_sections() {
+        let module = create_test_module();
+
+        // Predicate that includes all sections
+        let result = module.split(|_| true);
+        assert!(result.is_ok());
+        let split_module = result.unwrap();
+
+        // Should have original sections plus a delimiter at the end
+        assert!(split_module.sections.len() >= 3);
+        assert!(
+            split_module
+                .sections
+                .last()
+                .unwrap()
+                .is_signature_delimiter()
+        );
+    }
+
+    #[test]
+    fn test_split_no_sections() {
+        let module = create_test_module();
+
+        // Predicate that includes no sections
+        let result = module.split(|_| false);
+        assert!(result.is_ok());
+        let split_module = result.unwrap();
+
+        // Should have delimiters inserted
+        assert!(split_module.sections.len() > 3);
+    }
+
+    #[test]
+    fn test_split_with_existing_signature() {
+        let module = Module {
+            header: [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
+            sections: vec![
+                Section::Custom(CustomSection::new(
+                    SIGNATURE_SECTION_HEADER_NAME.to_string(),
+                    vec![1, 2, 3],
+                )),
+                Section::Standard(StandardSection::new(SectionId::Type, vec![4, 5, 6])),
+            ],
+        };
+
+        let result = module.split(|_| true);
+        assert!(result.is_ok());
+        let split_module = result.unwrap();
+
+        // Signature header should be preserved
+        assert!(split_module.sections[0].is_signature_header());
+    }
+
+    #[test]
+    fn test_split_selective() {
+        let module = create_test_module();
+
+        // Only include Type sections
+        let result = module.split(|section| matches!(section.id(), SectionId::Type));
+        assert!(result.is_ok());
+        let split_module = result.unwrap();
+
+        // Should have delimiters between different section types
+        let has_delimiter = split_module
+            .sections
+            .iter()
+            .any(|s| s.is_signature_delimiter());
+        assert!(has_delimiter);
+    }
+
+    #[test]
+    fn test_show_non_verbose() {
+        let module = create_test_module();
+        // Just verify it doesn't crash
+        let result = module.show(false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_show_verbose() {
+        let module = create_test_module();
+        // Just verify it doesn't crash
+        let result = module.show(true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_detach_attach_roundtrip() {
+        let signature_data = vec![42, 43, 44];
+        let original_module = create_test_module();
+
+        // Attach a signature
+        let signed_module = original_module.attach_signature(&signature_data).unwrap();
+
+        // Detach it
+        let (unsigned_module, detached_sig) = signed_module.detach_signature().unwrap();
+
+        // Verify the signature matches
+        assert_eq!(detached_sig, signature_data);
+
+        // Verify we're back to original structure (same number of sections)
+        assert_eq!(unsigned_module.sections.len(), 3);
+    }
+}

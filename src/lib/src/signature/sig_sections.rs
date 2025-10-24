@@ -1,11 +1,11 @@
 use log::*;
-use std::io::{prelude::*, BufReader, BufWriter};
+use std::io::{BufReader, BufWriter, prelude::*};
 
-use crate::error::*;
-use crate::wasm_module::*;
 use crate::ED25519_PK_ID;
 use crate::SIGNATURE_VERSION;
 use crate::SIGNATURE_WASM_MODULE_CONTENT_TYPE;
+use crate::error::*;
+use crate::wasm_module::*;
 
 pub const SIGNATURE_SECTION_HEADER_NAME: &str = "signature";
 pub const SIGNATURE_SECTION_DELIMITER_NAME: &str = "signature_delimiter";
@@ -177,4 +177,206 @@ pub fn new_delimiter_section() -> Result<Section, WSError> {
         SIGNATURE_SECTION_DELIMITER_NAME.to_string(),
         custom_payload,
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_signature_for_hashes_serialize_no_key_id() {
+        let sig = SignatureForHashes {
+            key_id: None,
+            alg_id: ED25519_PK_ID,
+            signature: vec![1, 2, 3, 4],
+        };
+        let serialized = sig.serialize().unwrap();
+        assert!(!serialized.is_empty());
+        // First byte should be 0 (no key_id)
+        assert_eq!(serialized[0], 0);
+    }
+
+    #[test]
+    fn test_signature_for_hashes_serialize_with_key_id() {
+        let sig = SignatureForHashes {
+            key_id: Some(vec![10, 20, 30]),
+            alg_id: ED25519_PK_ID,
+            signature: vec![1, 2, 3, 4],
+        };
+        let serialized = sig.serialize().unwrap();
+        assert!(!serialized.is_empty());
+    }
+
+    #[test]
+    fn test_signature_for_hashes_deserialize() {
+        let original = SignatureForHashes {
+            key_id: Some(vec![5, 6, 7]),
+            alg_id: ED25519_PK_ID,
+            signature: vec![11, 22, 33, 44],
+        };
+        let serialized = original.serialize().unwrap();
+        let deserialized = SignatureForHashes::deserialize(&serialized).unwrap();
+        assert_eq!(deserialized, original);
+    }
+
+    #[test]
+    fn test_signature_for_hashes_roundtrip_no_key_id() {
+        let original = SignatureForHashes {
+            key_id: None,
+            alg_id: ED25519_PK_ID,
+            signature: vec![100, 101, 102],
+        };
+        let serialized = original.serialize().unwrap();
+        let deserialized = SignatureForHashes::deserialize(&serialized).unwrap();
+        assert_eq!(deserialized.key_id, None);
+        assert_eq!(deserialized.alg_id, original.alg_id);
+        assert_eq!(deserialized.signature, original.signature);
+    }
+
+    #[test]
+    fn test_signed_hashes_serialize() {
+        let signed = SignedHashes {
+            hashes: vec![vec![1; 32], vec![2; 32]],
+            signatures: vec![SignatureForHashes {
+                key_id: None,
+                alg_id: ED25519_PK_ID,
+                signature: vec![9, 8, 7],
+            }],
+        };
+        let serialized = signed.serialize().unwrap();
+        assert!(!serialized.is_empty());
+    }
+
+    #[test]
+    fn test_signed_hashes_deserialize() {
+        let original = SignedHashes {
+            hashes: vec![vec![42; 32]],
+            signatures: vec![SignatureForHashes {
+                key_id: Some(vec![1, 2]),
+                alg_id: ED25519_PK_ID,
+                signature: vec![3, 4, 5],
+            }],
+        };
+        let serialized = original.serialize().unwrap();
+        let deserialized = SignedHashes::deserialize(&serialized).unwrap();
+        assert_eq!(deserialized.hashes.len(), 1);
+        assert_eq!(deserialized.hashes[0], vec![42; 32]);
+        assert_eq!(deserialized.signatures.len(), 1);
+    }
+
+    #[test]
+    fn test_signed_hashes_too_many_hashes() {
+        // Create data claiming to have more than MAX_HASHES
+        let mut buf = Vec::new();
+        varint::put(&mut buf, (MAX_HASHES + 1) as u64).unwrap();
+        let result = SignedHashes::deserialize(&buf);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), WSError::TooManyHashes(_)));
+    }
+
+    #[test]
+    fn test_signed_hashes_too_many_signatures() {
+        // Create valid hashes section
+        let mut buf = Vec::new();
+        varint::put(&mut buf, 1u64).unwrap(); // 1 hash
+        buf.extend_from_slice(&[0u8; 32]); // The hash
+
+        // Add too many signatures
+        varint::put(&mut buf, (MAX_SIGNATURES + 1) as u64).unwrap();
+
+        let result = SignedHashes::deserialize(&buf);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), WSError::TooManySignatures(_)));
+    }
+
+    #[test]
+    fn test_signature_data_serialize() {
+        let data = SignatureData {
+            specification_version: SIGNATURE_VERSION,
+            content_type: SIGNATURE_WASM_MODULE_CONTENT_TYPE,
+            hash_function: 0x01,
+            signed_hashes_set: vec![SignedHashes {
+                hashes: vec![vec![99; 32]],
+                signatures: vec![],
+            }],
+        };
+        let serialized = data.serialize().unwrap();
+        assert!(!serialized.is_empty());
+    }
+
+    #[test]
+    fn test_signature_data_deserialize() {
+        let original = SignatureData {
+            specification_version: SIGNATURE_VERSION,
+            content_type: SIGNATURE_WASM_MODULE_CONTENT_TYPE,
+            hash_function: 0x01,
+            signed_hashes_set: vec![SignedHashes {
+                hashes: vec![vec![55; 32]],
+                signatures: vec![SignatureForHashes {
+                    key_id: None,
+                    alg_id: ED25519_PK_ID,
+                    signature: vec![1, 2, 3],
+                }],
+            }],
+        };
+        let serialized = original.serialize().unwrap();
+        let deserialized = SignatureData::deserialize(&serialized).unwrap();
+        assert_eq!(
+            deserialized.specification_version,
+            original.specification_version
+        );
+        assert_eq!(deserialized.content_type, original.content_type);
+        assert_eq!(deserialized.hash_function, original.hash_function);
+        assert_eq!(deserialized.signed_hashes_set.len(), 1);
+    }
+
+    #[test]
+    fn test_signature_data_roundtrip() {
+        let original = SignatureData {
+            specification_version: SIGNATURE_VERSION,
+            content_type: SIGNATURE_WASM_MODULE_CONTENT_TYPE,
+            hash_function: 0x02,
+            signed_hashes_set: vec![
+                SignedHashes {
+                    hashes: vec![vec![1; 32], vec![2; 32]],
+                    signatures: vec![SignatureForHashes {
+                        key_id: Some(vec![10, 11]),
+                        alg_id: ED25519_PK_ID,
+                        signature: vec![20, 21, 22],
+                    }],
+                },
+                SignedHashes {
+                    hashes: vec![vec![3; 32]],
+                    signatures: vec![],
+                },
+            ],
+        };
+
+        let serialized = original.serialize().unwrap();
+        let deserialized = SignatureData::deserialize(&serialized).unwrap();
+
+        assert_eq!(deserialized, original);
+    }
+
+    #[test]
+    fn test_new_delimiter_section() {
+        let section = new_delimiter_section().unwrap();
+        assert!(section.is_signature_delimiter());
+
+        if let Section::Custom(custom) = section {
+            assert_eq!(custom.name(), SIGNATURE_SECTION_DELIMITER_NAME);
+            assert_eq!(custom.payload().len(), 16);
+        } else {
+            panic!("Expected custom section");
+        }
+    }
+
+    #[test]
+    fn test_new_delimiter_sections_are_unique() {
+        let section1 = new_delimiter_section().unwrap();
+        let section2 = new_delimiter_section().unwrap();
+
+        // Payloads should be different (random)
+        assert_ne!(section1.payload(), section2.payload());
+    }
 }

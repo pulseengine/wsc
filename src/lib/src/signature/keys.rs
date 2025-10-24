@@ -391,3 +391,453 @@ impl PublicKeySet {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_keypair() -> KeyPair {
+        KeyPair::generate()
+    }
+
+    #[test]
+    fn test_keypair_generate() {
+        let kp1 = KeyPair::generate();
+        let kp2 = KeyPair::generate();
+        // Different keypairs should have different public keys
+        assert_ne!(kp1.pk.pk.as_ref(), kp2.pk.pk.as_ref());
+    }
+
+    #[test]
+    fn test_public_key_to_from_bytes() {
+        let kp = create_test_keypair();
+        let bytes = kp.pk.to_bytes();
+
+        assert_eq!(bytes[0], ED25519_PK_ID);
+
+        let pk2 = PublicKey::from_bytes(&bytes).unwrap();
+        assert_eq!(pk2.pk.as_ref(), kp.pk.pk.as_ref());
+    }
+
+    #[test]
+    fn test_public_key_invalid_type() {
+        let bytes = vec![0xFF, 1, 2, 3, 4]; // Invalid key type
+        let result = PublicKey::from_bytes(&bytes);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), WSError::UnsupportedKeyType));
+    }
+
+    #[test]
+    fn test_public_key_to_from_pem() {
+        let kp = create_test_keypair();
+        let pem = kp.pk.to_pem();
+
+        assert!(pem.contains("PUBLIC KEY"));
+
+        let pk2 = PublicKey::from_pem(&pem).unwrap();
+        assert_eq!(pk2.pk.as_ref(), kp.pk.pk.as_ref());
+    }
+
+    #[test]
+    fn test_public_key_to_from_der() {
+        let kp = create_test_keypair();
+        let der = kp.pk.to_der();
+
+        assert!(!der.is_empty());
+
+        let pk2 = PublicKey::from_der(&der).unwrap();
+        assert_eq!(pk2.pk.as_ref(), kp.pk.pk.as_ref());
+    }
+
+    #[test]
+    fn test_public_key_from_any_bytes() {
+        let kp = create_test_keypair();
+        let bytes = kp.pk.to_bytes();
+        let pk = PublicKey::from_any(&bytes).unwrap();
+        assert_eq!(pk.pk.as_ref(), kp.pk.pk.as_ref());
+    }
+
+    #[test]
+    fn test_public_key_from_any_der() {
+        let kp = create_test_keypair();
+        let der = kp.pk.to_der();
+        let pk = PublicKey::from_any(&der).unwrap();
+        assert_eq!(pk.pk.as_ref(), kp.pk.pk.as_ref());
+    }
+
+    #[test]
+    fn test_public_key_from_any_pem() {
+        let kp = create_test_keypair();
+        let pem = kp.pk.to_pem();
+        let pk = PublicKey::from_any(pem.as_bytes()).unwrap();
+        assert_eq!(pk.pk.as_ref(), kp.pk.pk.as_ref());
+    }
+
+    #[test]
+    fn test_public_key_from_any_invalid() {
+        let invalid_data = b"not a valid key";
+        let result = PublicKey::from_any(invalid_data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_public_key_attach_default_key_id() {
+        let kp = create_test_keypair();
+        let pk_without_id = kp.pk.clone();
+        assert!(pk_without_id.key_id().is_none());
+
+        let pk_with_id = pk_without_id.attach_default_key_id();
+        assert!(pk_with_id.key_id().is_some());
+        assert_eq!(pk_with_id.key_id().unwrap().len(), 12);
+    }
+
+    #[test]
+    fn test_public_key_attach_default_key_id_idempotent() {
+        let kp = create_test_keypair();
+        let pk1 = kp.pk.attach_default_key_id();
+        let key_id1 = pk1.key_id().unwrap().clone();
+
+        let pk2 = pk1.attach_default_key_id();
+        let key_id2 = pk2.key_id().unwrap().clone();
+
+        assert_eq!(key_id1, key_id2);
+    }
+
+    #[test]
+    fn test_public_key_debug() {
+        let kp = create_test_keypair();
+        let debug_str = format!("{:?}", kp.pk);
+        assert!(debug_str.contains("PublicKey"));
+    }
+
+    #[test]
+    fn test_secret_key_to_from_bytes() {
+        let kp = create_test_keypair();
+        let bytes = kp.sk.to_bytes();
+
+        assert_eq!(bytes[0], ED25519_SK_ID);
+
+        let sk2 = SecretKey::from_bytes(&bytes).unwrap();
+        assert_eq!(sk2.sk.as_ref(), kp.sk.sk.as_ref());
+    }
+
+    #[test]
+    fn test_secret_key_invalid_type() {
+        let bytes = vec![0xFF, 1, 2, 3, 4]; // Invalid key type
+        let result = SecretKey::from_bytes(&bytes);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), WSError::UnsupportedKeyType));
+    }
+
+    #[test]
+    fn test_secret_key_to_from_pem() {
+        let kp = create_test_keypair();
+        let pem = kp.sk.to_pem();
+
+        assert!(pem.contains("PRIVATE KEY"));
+
+        let sk2 = SecretKey::from_pem(&pem).unwrap();
+        assert_eq!(sk2.sk.as_ref(), kp.sk.sk.as_ref());
+    }
+
+    #[test]
+    fn test_secret_key_to_from_der() {
+        let kp = create_test_keypair();
+        let der = kp.sk.to_der();
+
+        assert!(!der.is_empty());
+
+        let sk2 = SecretKey::from_der(&der).unwrap();
+        assert_eq!(sk2.sk.as_ref(), kp.sk.sk.as_ref());
+    }
+
+    #[test]
+    fn test_secret_key_debug() {
+        let kp = create_test_keypair();
+        let debug_str = format!("{:?}", kp.sk);
+        assert!(debug_str.contains("SecretKey"));
+    }
+
+    #[test]
+    fn test_public_key_set_empty() {
+        let set = PublicKeySet::empty();
+        assert!(set.is_empty());
+        assert_eq!(set.len(), 0);
+    }
+
+    #[test]
+    fn test_public_key_set_insert() {
+        let mut set = PublicKeySet::empty();
+        let kp = create_test_keypair();
+
+        set.insert(kp.pk.clone()).unwrap();
+        assert_eq!(set.len(), 1);
+        assert!(!set.is_empty());
+    }
+
+    #[test]
+    fn test_public_key_set_insert_duplicate() {
+        let mut set = PublicKeySet::empty();
+        let kp = create_test_keypair();
+
+        set.insert(kp.pk.clone()).unwrap();
+        let result = set.insert(kp.pk.clone());
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), WSError::DuplicatePublicKey));
+        assert_eq!(set.len(), 1); // Still only one key
+    }
+
+    #[test]
+    fn test_public_key_set_insert_any() {
+        let mut set = PublicKeySet::empty();
+        let kp = create_test_keypair();
+        let bytes = kp.pk.to_bytes();
+
+        set.insert_any(&bytes).unwrap();
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn test_public_key_set_remove() {
+        let mut set = PublicKeySet::empty();
+        let kp = create_test_keypair();
+
+        set.insert(kp.pk.clone()).unwrap();
+        assert_eq!(set.len(), 1);
+
+        set.remove(&kp.pk).unwrap();
+        assert_eq!(set.len(), 0);
+    }
+
+    #[test]
+    fn test_public_key_set_remove_unknown() {
+        let mut set = PublicKeySet::empty();
+        let kp = create_test_keypair();
+
+        let result = set.remove(&kp.pk);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), WSError::UnknownPublicKey));
+    }
+
+    #[test]
+    fn test_public_key_set_merge() {
+        let mut set1 = PublicKeySet::empty();
+        let mut set2 = PublicKeySet::empty();
+
+        let kp1 = create_test_keypair();
+        let kp2 = create_test_keypair();
+
+        set1.insert(kp1.pk).unwrap();
+        set2.insert(kp2.pk).unwrap();
+
+        set1.merge(&set2).unwrap();
+        assert_eq!(set1.len(), 2);
+    }
+
+    #[test]
+    fn test_public_key_set_merge_duplicate() {
+        let mut set1 = PublicKeySet::empty();
+        let mut set2 = PublicKeySet::empty();
+
+        let kp = create_test_keypair();
+
+        set1.insert(kp.pk.clone()).unwrap();
+        set2.insert(kp.pk.clone()).unwrap();
+
+        let result = set1.merge(&set2);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_public_key_set_items() {
+        let mut set = PublicKeySet::empty();
+        let kp = create_test_keypair();
+        set.insert(kp.pk.clone()).unwrap();
+
+        let items = set.items();
+        assert_eq!(items.len(), 1);
+        assert!(items.contains(&kp.pk));
+    }
+
+    #[test]
+    fn test_public_key_set_items_mut() {
+        let mut set = PublicKeySet::empty();
+        let kp = create_test_keypair();
+        set.insert(kp.pk.clone()).unwrap();
+
+        let items = set.items_mut();
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn test_public_key_set_attach_default_key_id() {
+        let mut set = PublicKeySet::empty();
+        let kp1 = create_test_keypair();
+        let kp2 = create_test_keypair();
+
+        set.insert(kp1.pk).unwrap();
+        set.insert(kp2.pk).unwrap();
+
+        let set_with_ids = set.attach_default_key_id();
+        assert_eq!(set_with_ids.len(), 2);
+
+        for pk in set_with_ids.items() {
+            assert!(pk.key_id().is_some());
+        }
+    }
+
+    #[test]
+    fn test_public_key_set_new() {
+        let kp = create_test_keypair();
+        let mut hash_set = HashSet::new();
+        hash_set.insert(kp.pk);
+
+        let set = PublicKeySet::new(hash_set);
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn test_keypair_clone_and_eq() {
+        let kp1 = create_test_keypair();
+        let kp2 = kp1.clone();
+        assert_eq!(kp1, kp2);
+    }
+
+    #[test]
+    fn test_public_key_clone_and_eq() {
+        let kp = create_test_keypair();
+        let pk1 = kp.pk.clone();
+        let pk2 = kp.pk.clone();
+        assert_eq!(pk1, pk2);
+    }
+
+    #[test]
+    fn test_secret_key_clone_and_eq() {
+        let kp = create_test_keypair();
+        let sk1 = kp.sk.clone();
+        let sk2 = kp.sk.clone();
+        assert_eq!(sk1, sk2);
+    }
+
+    #[test]
+    fn test_public_key_to_from_file() {
+        let kp = create_test_keypair();
+        let temp_file = std::env::temp_dir().join("test_pk.key");
+
+        // Write to file
+        kp.pk.to_file(&temp_file).unwrap();
+
+        // Read from file
+        let pk2 = PublicKey::from_file(&temp_file).unwrap();
+        assert_eq!(pk2.pk.as_ref(), kp.pk.pk.as_ref());
+
+        // Clean up
+        std::fs::remove_file(temp_file).ok();
+    }
+
+    #[test]
+    fn test_secret_key_to_from_file() {
+        let kp = create_test_keypair();
+        let temp_file = std::env::temp_dir().join("test_sk.key");
+
+        // Write to file
+        kp.sk.to_file(&temp_file).unwrap();
+
+        // Read from file
+        let sk2 = SecretKey::from_file(&temp_file).unwrap();
+        assert_eq!(sk2.sk.as_ref(), kp.sk.sk.as_ref());
+
+        // Clean up
+        std::fs::remove_file(temp_file).ok();
+    }
+
+    #[test]
+    fn test_public_key_from_any_file() {
+        let kp = create_test_keypair();
+        let temp_file = std::env::temp_dir().join("test_pk_any.key");
+
+        // Write PEM format
+        std::fs::write(&temp_file, kp.pk.to_pem()).unwrap();
+
+        // Read with from_any_file
+        let pk2 = PublicKey::from_any_file(&temp_file).unwrap();
+        assert_eq!(pk2.pk.as_ref(), kp.pk.pk.as_ref());
+
+        // Clean up
+        std::fs::remove_file(temp_file).ok();
+    }
+
+    #[test]
+    fn test_public_key_set_from_openssh() {
+        // Just test that it can parse an empty string without crashing
+        let result = PublicKeySet::from_openssh("");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_public_key_from_openssh_invalid() {
+        let result = PublicKey::from_openssh("invalid ssh key data");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_public_key_set_insert_any_invalid() {
+        let mut set = PublicKeySet::empty();
+        let result = set.insert_any(b"invalid key data");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_public_key_hash() {
+        let kp = create_test_keypair();
+        let mut set = std::collections::HashSet::new();
+        set.insert(kp.pk.clone());
+        assert!(set.contains(&kp.pk));
+    }
+
+    #[test]
+    fn test_secret_key_hash() {
+        let kp = create_test_keypair();
+        let mut set = std::collections::HashSet::new();
+        set.insert(kp.sk.clone());
+        assert!(set.contains(&kp.sk));
+    }
+
+    #[test]
+    fn test_keypair_hash() {
+        let kp1 = create_test_keypair();
+        let mut set = std::collections::HashSet::new();
+        set.insert(kp1.clone());
+        assert!(set.contains(&kp1));
+    }
+
+    #[test]
+    fn test_public_key_set_from_openssh_file_missing() {
+        let temp_file = std::env::temp_dir().join("nonexistent_openssh.key");
+        let result = PublicKeySet::from_openssh_file(&temp_file);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_public_key_from_openssh_file_missing() {
+        let temp_file = std::env::temp_dir().join("nonexistent_pk.key");
+        let result = PublicKey::from_openssh_file(&temp_file);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_secret_key_from_openssh_invalid() {
+        let result = SecretKey::from_openssh("invalid data");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_public_key_set_insert_any_file_missing() {
+        let mut set = PublicKeySet::empty();
+        let temp_file = std::env::temp_dir().join("nonexistent_any.key");
+        let result = set.insert_any_file(&temp_file);
+        assert!(result.is_err());
+    }
+}
