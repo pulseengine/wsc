@@ -21,7 +21,7 @@ rust_binary(
     name = "wasmsign_cli",
     srcs = ["main.rs"],
     crate_name = "wasmsign2_cli",
-    edition = "2021",
+    edition = "2024",
     rustc_env = {
         "CARGO_PKG_VERSION": VERSION,
         "CARGO_PKG_NAME": "wasmsign2-cli",

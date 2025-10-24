@@ -11,7 +11,7 @@ rust_library(
     name = "wasmsign2",
     srcs = glob(["src/**/*.rs"]),
     crate_name = "wasmsign2",
-    edition = "2021",
+    edition = "2024",
     deps = [
         "@wasmsign2_deps//:anyhow",
         "@wasmsign2_deps//:ct-codecs",

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bazel build:*)",
+      "Bash(cargo clippy:*)",
+      "WebSearch",
+      "Read(//Users/r/git/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
