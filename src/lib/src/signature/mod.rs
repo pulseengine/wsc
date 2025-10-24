@@ -7,8 +7,6 @@ mod simple;
 
 pub use keys::*;
 pub use matrix::*;
-pub use multi::*;
-pub use simple::*;
 
 pub(crate) use hash::*;
 pub(crate) use sig_sections::*;

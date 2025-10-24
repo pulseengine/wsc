@@ -557,6 +557,8 @@ fn start() -> Result<(), WSError> {
     Ok(())
 }
 
+// Native builds: Use ureq HTTP client
+#[cfg(not(target_os = "wasi"))]
 fn get_pks_from_github(account: impl AsRef<str>) -> Result<String, WSError> {
     let account_rawurlencoded = uri_encode::encode_uri_component(account.as_ref());
     let url = format!("https://github.com/{account_rawurlencoded}.keys");
@@ -568,6 +570,71 @@ fn get_pks_from_github(account: impl AsRef<str>) -> Result<String, WSError> {
         .read_to_vec()
         .map_err(|_| WSError::UsageError("Keys couldn't be retrieved from GitHub"))?;
     String::from_utf8(s).map_err(|_| {
+        WSError::UsageError("Unexpected characters in the public keys retrieved from GitHub")
+    })
+}
+
+// WASI builds: Use wasi::http outgoing-handler
+#[cfg(target_os = "wasi")]
+fn get_pks_from_github(account: impl AsRef<str>) -> Result<String, WSError> {
+    use wasi::http::outgoing_handler;
+    use wasi::http::types::{Fields, Method, OutgoingRequest, Scheme};
+
+    // Construct the URL for GitHub keys API
+    let account_encoded = account.as_ref().replace('/', "%2F");
+
+    // Parse URL components
+    let authority = "github.com";
+    let path = format!("/{}.keys", account_encoded);
+
+    // Create outgoing request
+    let headers = Fields::new();
+    let request = OutgoingRequest::new(headers);
+    request
+        .set_method(&Method::Get)
+        .map_err(|_| WSError::UsageError("Failed to set HTTP method"))?;
+    request
+        .set_scheme(Some(&Scheme::Https))
+        .map_err(|_| WSError::UsageError("Failed to set HTTPS scheme"))?;
+    request
+        .set_authority(Some(authority))
+        .map_err(|_| WSError::UsageError("Failed to set authority"))?;
+    request
+        .set_path_with_query(Some(&path))
+        .map_err(|_| WSError::UsageError("Failed to set path"))?;
+
+    // Send request
+    let future_response = outgoing_handler::handle(request, None)
+        .map_err(|_| WSError::UsageError("Failed to send HTTP request"))?;
+
+    // Wait for response
+    let incoming_response = future_response
+        .get()
+        .ok_or_else(|| WSError::UsageError("HTTP request not ready"))?
+        .map_err(|_| WSError::UsageError("Keys couldn't be retrieved from GitHub"))??;
+
+    // Read response body
+    let body = incoming_response
+        .consume()
+        .map_err(|_| WSError::UsageError("Failed to get response body"))?;
+
+    let mut bytes = Vec::new();
+    let stream = body
+        .stream()
+        .map_err(|_| WSError::UsageError("Failed to get body stream"))?;
+
+    loop {
+        let chunk = stream
+            .blocking_read(8192)
+            .map_err(|_| WSError::UsageError("Failed to read from stream"))?;
+
+        if chunk.is_empty() {
+            break;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+
+    String::from_utf8(bytes).map_err(|_| {
         WSError::UsageError("Unexpected characters in the public keys retrieved from GitHub")
     })
 }

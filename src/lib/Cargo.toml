@@ -1,14 +1,14 @@
 [package]
 name = "wasmsign2"
-version = "0.2.6"
-edition = "2021"
-authors = ["Frank Denis <github@pureftpd.org>"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "An implementation of the WebAssembly modules signatures proposal"
 readme = "../../README.md"
 keywords = ["webassembly", "modules", "signatures"]
-license = "MIT"
 homepage = "https://github.com/wasm-signatures/design"
-repository = "https://github.com/wasm-signatures/wasmsign2"
 categories = ["cryptography", "wasm"]
 
 [dependencies]
@@ -21,8 +21,3 @@ log = "0.4.22"
 regex = "1.11.1"
 ssh-keys = "0.1.4"
 thiserror = "2.0.3"
-
-[profile.release]
-codegen-units = 1
-incremental = false
-panic = "abort"

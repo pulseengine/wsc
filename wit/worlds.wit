@@ -1,0 +1,41 @@
+/// CLI world for wasmsign2 command-line tool
+///
+/// This world imports all necessary WASI interfaces for a full-featured
+/// command-line tool including:
+/// - File I/O for reading/writing keys and modules
+/// - Command-line argument parsing
+/// - HTTP client for fetching GitHub public keys
+world wasmsign-cli {
+    /// Import WASI filesystem for reading/writing keys and modules
+    import wasi:filesystem/types@0.2.3;
+    import wasi:filesystem/preopens@0.2.3;
+
+    /// Import WASI CLI for command-line arguments
+    import wasi:cli/environment@0.2.3;
+    import wasi:cli/stdin@0.2.3;
+    import wasi:cli/stdout@0.2.3;
+    import wasi:cli/stderr@0.2.3;
+
+    /// Import WASI HTTP for GitHub key fetching
+    import wasi:http/outgoing-handler@0.2.3;
+    import wasi:http/types@0.2.3;
+
+    /// Import our signing interface
+    import signing;
+
+    /// Export CLI command interface
+    export wasi:cli/run@0.2.3;
+}
+
+/// Reusable signing library world (no I/O)
+///
+/// This world exports only the signing interface without any I/O capabilities.
+/// It can be composed into other components or used as a library.
+/// Ideal for:
+/// - Integration into other WASM components
+/// - JavaScript usage via jco
+/// - Embedded in larger applications
+world signing-lib {
+    /// Export only the signing interface
+    export signing;
+}

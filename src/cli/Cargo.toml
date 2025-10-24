@@ -1,0 +1,34 @@
+[package]
+name = "wasmsign2-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI tool to sign and verify WebAssembly modules"
+readme = "../../README.md"
+keywords = ["webassembly", "modules", "signatures"]
+homepage = "https://github.com/wasm-signatures/design"
+categories = ["cryptography", "wasm"]
+
+[[bin]]
+name = "wasmsign2"
+path = "main.rs"
+
+[dependencies]
+clap = { version = "3.2.25", default-features = false, features = [
+    "std",
+    "cargo",
+    "wrap_help",
+] }
+env_logger = { version = "0.11.7", default-features = false, features = [
+    "humantime",
+] }
+regex = "1.11.1"
+# HTTP client for GitHub key fetching
+# - Native builds (not wasm32): use ureq
+# - WASI builds (wasm32-wasip2): use wasi::http
+ureq = { version = "3.0.8" }
+uri_encode = { version = "1.0.3" }
+wasi = { version = "0.13.3" }
+wasmsign2 = { version = "0.2.6", path = "../lib" }

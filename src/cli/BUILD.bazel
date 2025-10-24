@@ -1,0 +1,41 @@
+"""WebAssembly CLI component for signing and verifying WASM modules
+
+This is a WASI-enabled command-line tool that can run hermetically in Wasmtime.
+It provides the full wasmsign2 functionality including key generation, signing,
+verification, signature management, and GitHub public key fetching via wasi:http.
+
+HTTP client selection is automatic based on target:
+- Native builds: uses ureq
+- WASI builds: uses wasi::http/outgoing-handler
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# Version info - keep in sync with Cargo.toml
+# TODO: When version changes in Cargo.toml, update these values
+VERSION = "0.2.6"
+
+rust_binary(
+    name = "wasmsign_cli",
+    srcs = ["main.rs"],
+    crate_name = "wasmsign2_cli",
+    edition = "2021",
+    rustc_env = {
+        "CARGO_PKG_VERSION": VERSION,
+        "CARGO_PKG_NAME": "wasmsign2-cli",
+        "CARGO_PKG_DESCRIPTION": "CLI tool to sign and verify WebAssembly modules",
+        "CARGO_PKG_AUTHORS": "Frank Denis <github@pureftpd.org>",
+    },
+    deps = [
+        "//src/lib:wasmsign2",
+        "@wasmsign2_deps//:clap",
+        "@wasmsign2_deps//:env_logger",
+        "@wasmsign2_deps//:regex",
+        "@wasmsign2_deps//:ureq",
+        "@wasmsign2_deps//:uri_encode",
+        "@wasmsign2_deps//:wasi",
+    ],
+    # No feature flags needed - HTTP client selected via #[cfg(target_os = "wasi")]
+)

@@ -1,0 +1,82 @@
+/// WebAssembly Module Signatures Interface
+/// Based on https://github.com/WebAssembly/design/issues/1413
+///
+/// This package provides a reusable interface for WebAssembly module signing
+package wasm-signatures:wasmsign@0.2.6;
+
+/// Core signing operations for WebAssembly modules
+interface signing {
+    /// A cryptographic key pair for signing
+    record key-pair {
+        /// Ed25519 public key bytes (compact format with type prefix)
+        public-key: list<u8>,
+        /// Ed25519 secret key bytes (compact format with type prefix)
+        secret-key: list<u8>,
+    }
+
+    /// Options for signing a module
+    record sign-options {
+        /// Optional key identifier for the signature
+        key-id: option<list<u8>>,
+        /// Create detached signature (not embedded in module)
+        detached: bool,
+    }
+
+    /// Result of a signing operation
+    variant sign-result {
+        /// Signed module bytes (if not detached)
+        embedded(list<u8>),
+        /// Detached signature bytes
+        detached(list<u8>),
+    }
+
+    /// Generate a new Ed25519 key pair
+    /// Returns public and secret keys in compact format
+    keygen: func() -> result<key-pair, string>;
+
+    /// Sign a WebAssembly module
+    ///
+    /// # Arguments
+    /// * `module-bytes` - The WASM module to sign
+    /// * `secret-key` - Ed25519 secret key (compact format)
+    /// * `public-key` - Optional Ed25519 public key for key identification
+    /// * `options` - Signing options (detached, key-id)
+    ///
+    /// # Returns
+    /// Signed module bytes or detached signature
+    sign: func(
+        module-bytes: list<u8>,
+        secret-key: list<u8>,
+        public-key: option<list<u8>>,
+        options: sign-options
+    ) -> result<sign-result, string>;
+
+    /// Verify a signed WebAssembly module
+    ///
+    /// # Arguments
+    /// * `module-bytes` - The signed WASM module
+    /// * `public-key` - Ed25519 public key to verify with
+    /// * `detached-sig` - Optional detached signature bytes
+    ///
+    /// # Returns
+    /// true if signature is valid, false otherwise
+    verify: func(
+        module-bytes: list<u8>,
+        public-key: list<u8>,
+        detached-sig: option<list<u8>>
+    ) -> result<bool, string>;
+
+    /// Parse various key formats into compact format
+    /// Supports: compact, PEM, DER, OpenSSH
+    parse-public-key: func(key-bytes: list<u8>) -> result<list<u8>, string>;
+
+    /// Parse various secret key formats into compact format
+    /// Supports: compact, PEM, DER
+    parse-secret-key: func(key-bytes: list<u8>) -> result<list<u8>, string>;
+
+    /// Convert public key to PEM format
+    to-pem-public: func(key-bytes: list<u8>) -> result<string, string>;
+
+    /// Convert secret key to PEM format
+    to-pem-secret: func(key-bytes: list<u8>) -> result<string, string>;
+}

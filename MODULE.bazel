@@ -1,0 +1,85 @@
+"""Bazel Module for wasmsign2 WebAssembly Module Signing Tool"""
+
+module(
+    name = "wasmsign2",
+    version = "0.2.6",
+)
+
+# Dependencies
+bazel_dep(name = "rules_rust", version = "0.65.0")
+bazel_dep(name = "bazel_skylib", version = "1.8.1")
+bazel_dep(name = "platforms", version = "1.0.0")
+
+# WebAssembly Component Model support
+bazel_dep(name = "rules_wasm_component", version = "1.0.0")
+
+# Git repository override - use pulseengine fork with latest fixes
+git_override(
+    module_name = "rules_wasm_component",
+    commit = "27eefae46a6b542fedf066d924a3c07a7b3d6f6a",  # Latest: hermetic Go tools + go_sum support
+    remote = "https://github.com/pulseengine/rules_wasm_component.git",
+)
+
+# Local development override - use local rules_wasm_component (disabled for CI)
+# Uncomment for local development if you have rules_wasm_component checked out locally
+# local_path_override(
+#     module_name = "rules_wasm_component",
+#     path = "../rules_wasm_component",
+# )
+
+# Rust toolchain setup
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+    extra_target_triples = [
+        "wasm32-wasip2",  # WASI Preview 2 for component builds
+    ],
+    versions = ["1.90.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+# Rust crate dependencies via crate_universe
+# NOTE: rust_wasm_component uses Bazel's rust_shared_library, which requires
+# dependencies to be Bazel targets, not Cargo dependencies!
+crate = use_extension("@rules_rust//crate_universe:extension.bzl", "crate")
+crate.from_cargo(
+    name = "wasmsign2_deps",
+    cargo_lockfile = "//:Cargo.lock",
+    manifests = ["//:Cargo.toml"],  # Workspace root is sufficient
+    supported_platform_triples = [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "wasm32-wasip2",  # WASM target support
+    ],
+)
+use_repo(crate, "wasmsign2_deps")
+
+# WASI WIT interface definitions
+wasi_wit_ext = use_extension("@rules_wasm_component//wasm:extensions.bzl", "wasi_wit")
+wasi_wit_ext.init()
+use_repo(
+    wasi_wit_ext,
+    "wasi_cli",
+    "wasi_clocks",
+    "wasi_filesystem",
+    "wasi_http",
+    "wasi_io",
+    "wasi_random",
+    "wasi_sockets",
+)
+
+# WebAssembly toolchains
+wasm_toolchain = use_extension("@rules_wasm_component//wasm:extensions.bzl", "wasm_toolchain")
+wasm_toolchain.register(
+    name = "wasm_tools",
+    strategy = "download",  # Use pre-built binaries for faster builds
+    version = "1.240.0",
+)
+use_repo(wasm_toolchain, "wasm_tools_toolchains")
+
+register_toolchains("@wasm_tools_toolchains//:wasm_tools_toolchain")

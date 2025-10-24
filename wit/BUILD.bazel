@@ -1,0 +1,44 @@
+"""WIT interface definitions for wasmsign2"""
+
+load("@rules_wasm_component//wit:defs.bzl", "wit_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# WIT interface for WebAssembly module signing
+# Separated into:
+# - signing.wit: Reusable interface definitions
+# - worlds.wit: Application-specific worlds
+wit_library(
+    name = "wasmsign_wit",
+    srcs = [
+        "signing.wit",
+        "worlds.wit",
+    ],
+    package_name = "wasm-signatures:wasmsign",
+    world = "signing-lib",
+    # Add WASI dependencies that our WIT imports
+    deps = [
+        "@wasi_clocks//:clocks",
+        "@wasi_cli//:cli",
+        "@wasi_filesystem//:filesystem",
+        "@wasi_http//:http",
+        "@wasi_io//:streams",
+        "@wasi_random//:random",
+        "@wasi_sockets//:sockets",
+    ],
+)
+
+# Filegroup for easy reference to all WIT files
+filegroup(
+    name = "wasmsign_wit_files",
+    srcs = [
+        "signing.wit",
+        "worlds.wit",
+    ],
+)
+
+# Individual interface for external imports
+filegroup(
+    name = "signing_interface",
+    srcs = ["signing.wit"],
+)

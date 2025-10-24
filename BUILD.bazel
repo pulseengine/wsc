@@ -1,0 +1,69 @@
+"""WebAssembly Module Signing Tool - wasmsign2
+
+This workspace provides both native and WebAssembly builds of wasmsign2, a tool for
+signing and verifying WebAssembly modules using EdDSA signatures.
+
+## Architecture
+
+- `//src/lib`: Core signing library (shared by all targets)
+- `//wit`: WIT interface definitions for component model
+- `//src/component`: WASM component exporting signing interface
+- `//src/cli`: Command-line tool (native and WASI builds)
+
+## Key Targets
+
+- `//src/lib:wasmsign2` - Core Rust library
+- `//wit:wasmsign_wit` - WIT interface for component model
+- `//src/component:signing_lib` - WASM component (signing-lib.wasm)
+- `//src/cli:wasmsign_cli` - CLI tool (native and WASI)
+
+## Building
+
+Native CLI (with GitHub key fetching):
+```
+cargo build --release
+```
+
+WASM components (hermetic, no HTTP):
+```
+bazel build //src/component:signing_lib
+bazel build //src/cli:wasmsign_cli
+```
+
+## Features
+
+- Key generation (Ed25519)
+- Embedded and detached signatures
+- OpenSSH key format support
+- Module splitting for partial verification
+- Batch verification matrix
+- GitHub public key fetching (native builds only)
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+# Convenient aliases for common targets
+alias(
+    name = "signing_lib",
+    actual = "//src/component:signing_lib",
+)
+
+alias(
+    name = "cli",
+    actual = "//src/cli:wasmsign_cli",
+)
+
+# Filegroups for documentation
+filegroup(
+    name = "docs",
+    srcs = [
+        "README.md",
+        "Cargo.toml",
+    ],
+)
+
+# Export Cargo.toml files for use by other targets
+exports_files([
+    "Cargo.toml",
+    "Cargo.lock",
+])

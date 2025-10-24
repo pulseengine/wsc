@@ -1,0 +1,28 @@
+"""Core wasmsign2 library
+
+This library provides the core signing/verification functionality.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_library")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "wasmsign2",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "wasmsign2",
+    edition = "2021",
+    deps = [
+        "@wasmsign2_deps//:anyhow",
+        "@wasmsign2_deps//:ct-codecs",
+        "@wasmsign2_deps//:ed25519-compact",
+        "@wasmsign2_deps//:getrandom",
+        "@wasmsign2_deps//:hmac-sha256",
+        "@wasmsign2_deps//:log",
+        "@wasmsign2_deps//:regex",
+        "@wasmsign2_deps//:ssh-keys",
+        "@wasmsign2_deps//:thiserror",
+    ],
+)
+
+exports_files(["Cargo.toml"])

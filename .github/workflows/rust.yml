@@ -8,10 +8,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.90.0"
 
 jobs:
-  build:
-
+  # Native Cargo build and test
+  cargo-build:
+    name: Cargo Build & Test
     runs-on: ubuntu-latest
 
     steps:
@@ -20,3 +22,84 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+
+  # Bazel WASM component builds
+  bazel-wasm:
+    name: Bazel WASM Components
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Bazel
+      uses: bazel-contrib/setup-bazel@0.15.0
+      with:
+        bazelisk-cache: true
+        disk-cache: ${{ github.workflow }}
+        repository-cache: true
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: ${{ env.RUST_VERSION }}
+        targets: wasm32-wasip2
+
+    - name: Cache Bazel
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/bazel
+          ~/.cache/bazelisk
+        key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '**/*.bzl') }}
+        restore-keys: |
+          bazel-${{ runner.os }}-
+
+    - name: Cache Cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+        restore-keys: |
+          cargo-${{ runner.os }}-
+
+    - name: Build Core Library
+      run: |
+        bazel build //src/lib:wasmsign2
+
+    - name: Build Signing Component (WASM)
+      run: |
+        bazel build //src/component:signing_lib
+
+    - name: Build CLI Component (WASI)
+      run: |
+        bazel build //src/cli:wasmsign_cli
+
+    - name: Validate WASM Components
+      run: |
+        # List built artifacts
+        echo "✅ Built WASM components:"
+        ls -lh bazel-bin/src/component/ || echo "Component artifacts location may vary"
+        ls -lh bazel-bin/src/cli/ || echo "CLI artifacts location may vary"
+
+        # Find and validate WASM files
+        find bazel-bin -name "*.wasm" -type f | while read wasm_file; do
+          echo "Checking $wasm_file"
+          file "$wasm_file"
+        done
+
+    - name: Upload WASM Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: wasm-components-${{ matrix.os }}
+        path: |
+          bazel-bin/src/component/**/*.wasm
+          bazel-bin/src/cli/**/*.wasm
+        retention-days: 7
+        if-no-files-found: warn
