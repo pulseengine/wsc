@@ -4,7 +4,8 @@
       "Bash(bazel build:*)",
       "Bash(cargo clippy:*)",
       "WebSearch",
-      "Read(//Users/r/git/**)"
+      "Read(//Users/r/git/**)",
+      "WebFetch(domain:docs.rs)"
     ],
     "deny": [],
     "ask": []
