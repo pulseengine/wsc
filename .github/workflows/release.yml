@@ -81,10 +81,11 @@ jobs:
         echo "Found component WASM: $COMPONENT_WASM"
         cp "$COMPONENT_WASM" ./wasmsign2-component.wasm
 
-        # Find and copy the CLI WASM if it exists (will be in wasm32-wasip2 platform output)
-        CLI_WASM=$(ls bazel-out/wasm32-*/bin/src/cli/wasmsign_cli.wasm 2>/dev/null | head -n 1)
+        # Find and copy the CLI WASM if it exists
+        # After building with --platforms flag, it's at bazel-bin/src/cli/wasmsign_cli.wasm
+        CLI_WASM="bazel-bin/src/cli/wasmsign_cli.wasm"
 
-        if [ -n "$CLI_WASM" ]; then
+        if [ -f "$CLI_WASM" ]; then
           echo "Found CLI WASM: $CLI_WASM"
           cp "$CLI_WASM" ./wasmsign2-cli.wasm
         else
