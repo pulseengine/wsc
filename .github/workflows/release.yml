@@ -63,9 +63,9 @@ jobs:
         echo "Building signing library component..."
         bazel build //src/component:signing_lib_release
 
-        # Build CLI WASM binary
+        # Build CLI WASM binary with wasm32-wasip2 platform
         echo "Building CLI WASM binary..."
-        bazel build //src/cli:wasmsign_cli_wasm || echo "CLI WASM build failed, continuing..."
+        bazel build //src/cli:wasmsign_cli_wasm --platforms=@rules_wasm_component//platforms:wasm32-wasip2 || echo "CLI WASM build failed, continuing..."
 
         # Find and copy the component WASM
         # Pattern: bazel-out/<platform>-fastbuild-ST-<hash>/bin/src/component/*.wasm
@@ -81,8 +81,8 @@ jobs:
         echo "Found component WASM: $COMPONENT_WASM"
         cp "$COMPONENT_WASM" ./wasmsign2-component.wasm
 
-        # Find and copy the CLI WASM if it exists
-        CLI_WASM=$(ls bazel-out/k8-fastbuild-ST-*/bin/src/cli/*.wasm 2>/dev/null | head -n 1)
+        # Find and copy the CLI WASM if it exists (will be in wasm32-wasip2 platform output)
+        CLI_WASM=$(ls bazel-out/wasm32-*/bin/src/cli/wasmsign_cli.wasm 2>/dev/null | head -n 1)
 
         if [ -n "$CLI_WASM" ]; then
           echo "Found CLI WASM: $CLI_WASM"

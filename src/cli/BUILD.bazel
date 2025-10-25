@@ -10,7 +10,6 @@ HTTP client selection is automatic based on target:
 """
 
 load("@rules_rust//rust:defs.bzl", "rust_binary")
-load("@rules_wasm_component//rust:defs.bzl", "rust_wasm_binary")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -42,23 +41,9 @@ rust_binary(
 )
 
 # WASM binary for WASI runtime (Wasmtime, etc.)
-rust_wasm_binary(
+# Build this target with: bazel build //src/cli:wasmsign_cli --platforms=@rules_wasm_component//platforms:wasm32-wasip2
+# The same rust_binary source works for both native and WASM thanks to #[cfg(target_os = "wasi")]
+alias(
     name = "wasmsign_cli_wasm",
-    srcs = ["main.rs"],
-    edition = "2024",
-    rustc_env = {
-        "CARGO_PKG_VERSION": VERSION,
-        "CARGO_PKG_NAME": "wasmsign2-cli",
-        "CARGO_PKG_DESCRIPTION": "CLI tool to sign and verify WebAssembly modules",
-        "CARGO_PKG_AUTHORS": "Frank Denis <github@pureftpd.org>",
-    },
-    deps = [
-        "//src/lib:wasmsign2",
-        "@wasmsign2_deps//:clap",
-        "@wasmsign2_deps//:env_logger",
-        "@wasmsign2_deps//:regex",
-        "@wasmsign2_deps//:ureq",
-        "@wasmsign2_deps//:uri_encode",
-        "@wasmsign2_deps//:wasi",
-    ],
+    actual = ":wasmsign_cli",
 )
