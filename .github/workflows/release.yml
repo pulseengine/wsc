@@ -34,6 +34,11 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v5
 
+    - name: Setup C++ Build Tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential gcc g++
+
     - name: Setup Bazel
       uses: bazel-contrib/setup-bazel@0.15.0
       with:
