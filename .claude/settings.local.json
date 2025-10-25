@@ -12,7 +12,9 @@
       "Bash(gh run view:*)",
       "Bash(gh repo view:*)",
       "WebFetch(domain:github.com)",
-      "Bash(gh issue list:*)"
+      "Bash(gh issue list:*)",
+      "Read(//private/tmp/wasmsign2-test/**)",
+      "Bash(wasmtime run:*)"
     ],
     "deny": [],
     "ask": []
