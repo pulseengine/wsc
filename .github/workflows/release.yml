@@ -136,6 +136,9 @@ jobs:
           TAG="${{ github.ref_name }}-${GITHUB_SHA:0:7}"
         fi
 
+        # Sanitize tag for OCI (replace / with -)
+        TAG="${TAG//\//-}"
+
         # Create OCI artifact references
         IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
         IMAGE_LATEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
@@ -342,6 +345,9 @@ jobs:
           # For push to branches, use branch name + short SHA
           TAG="${{ github.ref_name }}-${GITHUB_SHA:0:7}"
         fi
+
+        # Sanitize tag for OCI (replace / with -)
+        TAG="${TAG//\//-}"
 
         echo "## 🚀 Release Summary" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
