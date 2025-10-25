@@ -39,35 +39,10 @@ jobs:
       uses: bazel-contrib/setup-bazel@0.15.0
       with:
         bazelisk-cache: true
-        disk-cache: ${{ github.workflow }}
+        # Use a shared cache key across all builds for better reuse
+        disk-cache: ${{ runner.os }}-bazel
         repository-cache: true
-
-    - name: Setup Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: ${{ env.RUST_VERSION }}
-        targets: wasm32-wasip2
-
-    - name: Cache Bazel
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cache/bazel
-          ~/.cache/bazelisk
-        key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', '**/*.bzl') }}
-        restore-keys: |
-          bazel-${{ runner.os }}-
-
-    - name: Cache Cargo
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
-        restore-keys: |
-          cargo-${{ runner.os }}-
+        # setup-bazel handles caching internally, no need for manual cache steps
 
     - name: Build Core Library
       run: |

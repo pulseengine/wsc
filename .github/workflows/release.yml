@@ -43,14 +43,9 @@ jobs:
       uses: bazel-contrib/setup-bazel@0.15.0
       with:
         bazelisk-cache: true
-        disk-cache: ${{ github.workflow }}
+        # Use a shared cache key across all builds for better reuse
+        disk-cache: ${{ runner.os }}-bazel
         repository-cache: true
-
-    - name: Setup Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: ${{ env.RUST_VERSION }}
-        targets: wasm32-wasip2
 
     - name: Install Cosign
       uses: sigstore/cosign-installer@v3
