@@ -8,6 +8,41 @@ use clap::{Arg, ArgAction, Command, crate_description, crate_name, crate_version
 use regex::RegexBuilder;
 use std::fs::File;
 use std::io::{BufReader, prelude::*};
+use std::path::Path;
+
+/// Helper function to create a file with parent directories
+fn create_file_with_dirs(path: impl AsRef<Path>) -> Result<File, WSError> {
+    let path = path.as_ref();
+    // Create parent directories if they don't exist
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            WSError::InternalError(format!(
+                "Failed to create parent directory for '{}': {}",
+                path.display(),
+                e
+            ))
+        })?;
+    }
+    File::create(path).map_err(|e| {
+        WSError::InternalError(format!(
+            "Failed to create file '{}': {}",
+            path.display(),
+            e
+        ))
+    })
+}
+
+/// Helper function to open a file with better error messages
+fn open_file(path: impl AsRef<Path>) -> Result<File, WSError> {
+    let path = path.as_ref();
+    File::open(path).map_err(|e| {
+        WSError::InternalError(format!(
+            "Failed to open file '{}': {}",
+            path.display(),
+            e
+        ))
+    })
+}
 
 fn start() -> Result<(), WSError> {
     let matches = Command::new(crate_name!())
@@ -378,7 +413,7 @@ fn start() -> Result<(), WSError> {
             sk.sign_multi(module, key_id.as_ref(), signature_file.is_some(), false)?;
         if let Some(signature_file) = signature_file {
             module.serialize_to_file(output_file)?;
-            File::create(signature_file)?.write_all(&signature)?;
+            create_file_with_dirs(signature_file)?.write_all(&signature)?;
         } else {
             module.serialize_to_file(output_file)?;
         }
@@ -424,11 +459,11 @@ fn start() -> Result<(), WSError> {
         let detached_signatures = match signature_file {
             None => None,
             Some(signature_file) => {
-                File::open(signature_file)?.read_to_end(&mut detached_signatures_)?;
+                open_file(signature_file)?.read_to_end(&mut detached_signatures_)?;
                 Some(detached_signatures_.as_slice())
             }
         };
-        let mut reader = BufReader::new(File::open(input_file)?);
+        let mut reader = BufReader::new(open_file(input_file)?);
         if let Some(signed_sections_rx) = &signed_sections_rx {
             pk.verify_multi(&mut reader, detached_signatures, |section| match section {
                 Section::Standard(_) => true,
@@ -452,7 +487,7 @@ fn start() -> Result<(), WSError> {
             signature_file.ok_or(WSError::UsageError("Missing detached signature file"))?;
         let module = Module::deserialize_from_file(input_file)?;
         let (module, detached_signature) = module.detach_signature()?;
-        File::create(signature_file)?.write_all(&detached_signature)?;
+        create_file_with_dirs(signature_file)?.write_all(&detached_signature)?;
         module.serialize_to_file(output_file)?;
         println!("Signature is now detached.");
     } else if let Some(matches) = matches.subcommand_matches("attach") {
@@ -466,7 +501,7 @@ fn start() -> Result<(), WSError> {
         let signature_file =
             signature_file.ok_or(WSError::UsageError("Missing detached signature file"))?;
         let mut detached_signature = vec![];
-        File::open(signature_file)?.read_to_end(&mut detached_signature)?;
+        open_file(signature_file)?.read_to_end(&mut detached_signature)?;
         let mut module = Module::deserialize_from_file(input_file)?;
         module = module.attach_signature(&detached_signature)?;
         module.serialize_to_file(output_file)?;
@@ -522,11 +557,11 @@ fn start() -> Result<(), WSError> {
         let detached_signatures = match signature_file {
             None => None,
             Some(signature_file) => {
-                File::open(signature_file)?.read_to_end(&mut detached_signatures_)?;
+                open_file(signature_file)?.read_to_end(&mut detached_signatures_)?;
                 Some(detached_signatures_.as_slice())
             }
         };
-        let mut reader = BufReader::new(File::open(input_file)?);
+        let mut reader = BufReader::new(open_file(input_file)?);
         let predicates: Vec<BoxedPredicate> = if let Some(signed_sections_rx) = signed_sections_rx {
             vec![Box::new(move |section| match section {
                 Section::Standard(_) => true,

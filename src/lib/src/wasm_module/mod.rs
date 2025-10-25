@@ -385,7 +385,14 @@ impl Module {
 
     /// Deserialize a WebAssembly module from the given file.
     pub fn deserialize_from_file(file: impl AsRef<Path>) -> Result<Self, WSError> {
-        let fp = File::open(file.as_ref())?;
+        let path = file.as_ref();
+        let fp = File::open(path).map_err(|e| {
+            WSError::InternalError(format!(
+                "Failed to open input file '{}': {}",
+                path.display(),
+                e
+            ))
+        })?;
         Self::deserialize(&mut BufReader::new(fp))
     }
 
@@ -400,7 +407,24 @@ impl Module {
 
     /// Serialize a WebAssembly module to the given file.
     pub fn serialize_to_file(&self, file: impl AsRef<Path>) -> Result<(), WSError> {
-        let fp = File::create(file.as_ref())?;
+        let path = file.as_ref();
+        // Create parent directories if they don't exist
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                WSError::InternalError(format!(
+                    "Failed to create parent directory for '{}': {}",
+                    path.display(),
+                    e
+                ))
+            })?;
+        }
+        let fp = File::create(path).map_err(|e| {
+            WSError::InternalError(format!(
+                "Failed to create output file '{}': {}",
+                path.display(),
+                e
+            ))
+        })?;
         self.serialize(&mut BufWriter::new(fp))
     }
 
