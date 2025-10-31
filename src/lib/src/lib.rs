@@ -20,6 +20,9 @@ pub use split::*;
 #[allow(unused_imports)]
 pub use wasm_module::*;
 
+// Re-export keyless module for public API
+pub use signature::keyless;
+
 pub mod reexports {
     pub use {anyhow, ct_codecs, getrandom, hmac_sha256, log, regex, thiserror};
 }

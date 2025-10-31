@@ -134,11 +134,18 @@ fn start() -> Result<(), WSError> {
                         .help("Output file"),
                 )
                 .arg(
+                    Arg::new("keyless")
+                        .long("keyless")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with("secret_key")
+                        .help("Use keyless signing (ephemeral keys + Fulcio + Rekor)"),
+                )
+                .arg(
                     Arg::new("secret_key")
                         .value_name("secret_key_file")
                         .long("secret-key")
                         .short('k')
-                        .required(true)
+                        .required_unless_present("keyless")
                         .help("Secret key file"),
                 )
                 .arg(
@@ -384,41 +391,67 @@ fn start() -> Result<(), WSError> {
     } else if let Some(matches) = matches.subcommand_matches("sign") {
         let input_file = matches.get_one::<String>("in").map(|s| s.as_str());
         let output_file = matches.get_one::<String>("out").map(|s| s.as_str());
-        let signature_file = matches
-            .get_one::<String>("signature_file")
-            .map(|s| s.as_str());
-        let sk_file = matches
-            .get_one::<String>("secret_key")
-            .map(|s| s.as_str())
-            .ok_or(WSError::UsageError("Missing secret key file"))?;
-        let sk = match matches.get_flag("ssh") {
-            false => SecretKey::from_file(sk_file)?,
-            true => SecretKey::from_openssh_file(sk_file)?,
-        };
-        let pk_file = matches.get_one::<String>("public_key").map(|s| s.as_str());
-        let key_id = if let Some(pk_file) = pk_file {
-            let pk = match matches.get_flag("ssh") {
-                false => PublicKey::from_file(pk_file)?,
-                true => PublicKey::from_openssh_file(pk_file)?,
-            }
-            .attach_default_key_id();
-            pk.key_id().cloned()
-        } else {
-            None
-        };
         let input_file = input_file.ok_or(WSError::UsageError("Missing input file"))?;
         let output_file = output_file.ok_or(WSError::UsageError("Missing output file"))?;
-        let module = Module::deserialize_from_file(input_file)?;
-        let (module, signature) =
-            sk.sign_multi(module, key_id.as_ref(), signature_file.is_some(), false)?;
-        if let Some(signature_file) = signature_file {
-            module.serialize_to_file(output_file)?;
-            create_file_with_dirs(signature_file)?.write_all(&signature)?;
+
+        if matches.get_flag("keyless") {
+            // Keyless signing path
+            use wasmsign2::keyless::{KeylessSigner, KeylessConfig};
+
+            println!("Using keyless signing...");
+            let config = KeylessConfig::default();
+            let signer = KeylessSigner::with_config(config)?;
+
+            let module = Module::deserialize_from_file(input_file)?;
+            let (signed_module, keyless_sig) = signer.sign_module(module)?;
+
+            signed_module.serialize_to_file(output_file)?;
+
+            println!("\n✓ Module signed with keyless signature");
+            println!("  Identity: {}", keyless_sig.get_identity()?);
+            println!("  Issuer: {}", keyless_sig.get_issuer()?);
+            if !keyless_sig.rekor_entry.uuid.is_empty() {
+                println!("  Rekor entry: {}", keyless_sig.rekor_entry.uuid);
+                println!("  Rekor index: {}", keyless_sig.rekor_entry.log_index);
+            }
+            println!("\n* Signed module structure:\n");
+            signed_module.show(verbose)?;
         } else {
-            module.serialize_to_file(output_file)?;
+            // Traditional key-based signing
+            let signature_file = matches
+                .get_one::<String>("signature_file")
+                .map(|s| s.as_str());
+            let sk_file = matches
+                .get_one::<String>("secret_key")
+                .map(|s| s.as_str())
+                .ok_or(WSError::UsageError("Missing secret key file"))?;
+            let sk = match matches.get_flag("ssh") {
+                false => SecretKey::from_file(sk_file)?,
+                true => SecretKey::from_openssh_file(sk_file)?,
+            };
+            let pk_file = matches.get_one::<String>("public_key").map(|s| s.as_str());
+            let key_id = if let Some(pk_file) = pk_file {
+                let pk = match matches.get_flag("ssh") {
+                    false => PublicKey::from_file(pk_file)?,
+                    true => PublicKey::from_openssh_file(pk_file)?,
+                }
+                .attach_default_key_id();
+                pk.key_id().cloned()
+            } else {
+                None
+            };
+            let module = Module::deserialize_from_file(input_file)?;
+            let (module, signature) =
+                sk.sign_multi(module, key_id.as_ref(), signature_file.is_some(), false)?;
+            if let Some(signature_file) = signature_file {
+                module.serialize_to_file(output_file)?;
+                create_file_with_dirs(signature_file)?.write_all(&signature)?;
+            } else {
+                module.serialize_to_file(output_file)?;
+            }
+            println!("* Signed module structure:\n");
+            module.show(verbose)?;
         }
-        println!("* Signed module structure:\n");
-        module.show(verbose)?;
     } else if let Some(matches) = matches.subcommand_matches("verify") {
         let input_file = matches.get_one::<String>("in").map(|s| s.as_str());
         let signature_file = matches

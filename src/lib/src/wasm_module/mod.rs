@@ -875,6 +875,6 @@ mod tests {
     fn test_custom_section_default() {
         let custom = CustomSection::default();
         assert_eq!(custom.name(), "");
-        assert_eq!(custom.payload(), &[]);
+        assert_eq!(custom.payload(), &[] as &[u8]);
     }
 }

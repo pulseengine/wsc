@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, feature/bazel-ci ]
   pull_request:
     branches: [ master ]
 
@@ -11,65 +11,62 @@ env:
   RUST_VERSION: "1.90.0"
 
 jobs:
-  # Native Cargo build and test
-  cargo-build:
-    name: Cargo Build & Test
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
-
-  # Bazel WASM component builds
-  bazel-wasm:
-    name: Bazel WASM Components
+  build-matrix:
+    name: ${{ matrix.build-system }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        build-system: [cargo, bazel]
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    # Cargo build and test
+    - name: Cargo Build
+      if: matrix.build-system == 'cargo'
+      run: cargo build --verbose
+
+    - name: Cargo Test
+      if: matrix.build-system == 'cargo'
+      run: cargo test --verbose
+
+    # Bazel setup and builds
     - name: Setup Bazel
+      if: matrix.build-system == 'bazel'
       uses: bazel-contrib/setup-bazel@0.15.0
       with:
         bazelisk-cache: true
-        # Use a shared cache key across all builds for better reuse
         disk-cache: ${{ runner.os }}-bazel
         repository-cache: true
-        # setup-bazel handles caching internally, no need for manual cache steps
 
-    - name: Build Core Library
-      run: |
-        bazel build //src/lib:wasmsign2
+    - name: Build Core Library (Bazel)
+      if: matrix.build-system == 'bazel'
+      run: bazel build //src/lib:wasmsign2
 
-    - name: Build Signing Component (WASM)
-      run: |
-        bazel build //src/component:signing_lib
+    - name: Build Signing Component (Bazel)
+      if: matrix.build-system == 'bazel'
+      run: bazel build //src/component:signing_lib
 
-    - name: Build CLI Component (WASI)
-      run: |
-        bazel build //src/cli:wasmsign_cli
+    - name: Build CLI Component (Bazel)
+      if: matrix.build-system == 'bazel'
+      run: bazel build //src/cli:wasmsign_cli
 
-    - name: Validate WASM Components
+    - name: Validate WASM Components (Bazel)
+      if: matrix.build-system == 'bazel'
       run: |
-        # List built artifacts
         echo "✅ Built WASM components:"
         ls -lh bazel-bin/src/component/ || echo "Component artifacts location may vary"
         ls -lh bazel-bin/src/cli/ || echo "CLI artifacts location may vary"
-
-        # Find and validate WASM files
         find bazel-bin -name "*.wasm" -type f | while read wasm_file; do
           echo "Checking $wasm_file"
           file "$wasm_file"
         done
 
-    - name: Upload WASM Artifacts
+    - name: Upload WASM Artifacts (Bazel)
+      if: matrix.build-system == 'bazel'
       uses: actions/upload-artifact@v4
       with:
         name: wasm-components-${{ matrix.os }}
@@ -78,3 +75,19 @@ jobs:
           bazel-bin/src/cli/**/*.wasm
         retention-days: 7
         if-no-files-found: warn
+
+  # Integration tests for keyless signing (requires OIDC)
+  keyless-integration:
+    name: Keyless Integration Tests
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Required for OIDC token
+      contents: read
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Keyless Integration Tests
+      run: cargo test --test keyless_integration -- --ignored --nocapture
+      env:
+        RUST_LOG: debug

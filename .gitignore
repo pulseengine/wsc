@@ -4,6 +4,6 @@
 *.key
 *.key2
 *.sh
-signature
+/signature
 src/lib/target
 wasmsign2

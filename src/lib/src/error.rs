@@ -63,6 +63,34 @@ pub enum WSError {
 
     #[error("Usage error: {0}")]
     UsageError(&'static str),
+
+    #[error("OIDC error: {0}")]
+    OidcError(String),
+
+    #[error("Fulcio error: {0}")]
+    FulcioError(String),
+
+    #[error("Rekor error: {0}")]
+    RekorError(String),
+
+    #[error("Certificate verification failed: {0}")]
+    CertificateError(String),
+
+    #[error("Keyless signature format error: {0}")]
+    KeylessFormatError(String),
+
+    #[error("No OIDC provider detected")]
+    NoOidcProvider,
+
+    #[error("X509 error: {0}")]
+    X509Error(String),
+}
+
+// X509 error conversion
+impl From<x509_parser::error::X509Error> for WSError {
+    fn from(err: x509_parser::error::X509Error) -> Self {
+        WSError::X509Error(format!("{:?}", err))
+    }
 }
 
 // WASI HTTP error conversion for wasm32-wasip2 target

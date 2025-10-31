@@ -33,7 +33,7 @@ rust_binary(
         "@wasmsign2_deps//:clap",
         "@wasmsign2_deps//:env_logger",
         "@wasmsign2_deps//:regex",
-        "@wasmsign2_deps//:ureq",
+        "@wasmsign2_deps//:ureq-3.1.2",
         "@wasmsign2_deps//:uri_encode",
         "@wasmsign2_deps//:wasi",
     ],

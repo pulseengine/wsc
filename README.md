@@ -10,6 +10,7 @@ A tool and library for signing WebAssembly modules.
   - [WASM signatures](#wasm-signatures)
   - [Installation](#installation)
   - [Usage](#usage)
+  - [Keyless Signing](#keyless-signing)
   - [Inspecting a module](#inspecting-a-module)
   - [Creating a key pair](#creating-a-key-pair)
   - [Signing a WebAssembly module](#signing-a-webassembly-module)
@@ -79,6 +80,81 @@ SUBCOMMANDS:
     verify           Verify a module's signatures
     verify_matrix    Batch verification against multiple public keys
 ```
+
+## Keyless Signing
+
+Wasmsign2 supports **keyless signing** using the [Sigstore](https://sigstore.dev) infrastructure. This eliminates the need to manage long-lived cryptographic keys by using:
+
+- **OIDC identity tokens** (from GitHub Actions, Google Cloud, GitLab CI, etc.)
+- **Short-lived certificates** from [Fulcio](https://docs.sigstore.dev/fulcio/overview)
+- **Transparency logging** in [Rekor](https://docs.sigstore.dev/rekor/overview)
+
+### Benefits
+
+- **No key management** - No need to generate, store, or rotate signing keys
+- **Identity binding** - Signatures are tied to your CI/CD identity (e.g., GitHub repository + workflow)
+- **Full transparency** - All signatures are logged in the public Rekor transparency log
+- **Automatic** - Works seamlessly in GitHub Actions and other CI/CD systems
+
+### Usage in GitHub Actions
+
+```yaml
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Required for OIDC token
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sign WASM module
+        run: |
+          wasmsign2 sign --keyless \
+            --input-file module.wasm \
+            --output-file signed.wasm
+```
+
+The `--keyless` flag automatically:
+1. Detects the GitHub Actions OIDC provider
+2. Generates an ephemeral Ed25519 keypair
+3. Requests a short-lived certificate from Fulcio (~10 minute validity)
+4. Signs the module hash
+5. Uploads the signature to Rekor transparency log
+6. Embeds the signature in the WASM module
+
+### Command Line Example
+
+```sh
+# In a CI/CD environment with OIDC (GitHub Actions, Google Cloud, etc.)
+wasmsign2 sign --keyless -i module.wasm -o signed.wasm
+```
+
+**Output:**
+```
+Using keyless signing...
+OIDC token obtained for identity: https://github.com/owner/repo/.github/workflows/build.yml@refs/tags/v1.0.0
+
+✓ Module signed with keyless signature
+  Identity: https://github.com/owner/repo/.github/workflows/build.yml@refs/tags/v1.0.0
+  Issuer: https://token.actions.githubusercontent.com
+  Rekor entry: abc123def456...
+  Rekor index: 12345678
+```
+
+### Verification (Coming Soon)
+
+```sh
+# Verify keyless signature (pending implementation)
+wasmsign2 verify --keyless \
+  --identity-regexp "https://github.com/owner/repo" \
+  --issuer "https://token.actions.githubusercontent.com" \
+  -i signed.wasm
+```
+
+### Documentation
+
+- [Keyless Signing Guide](docs/keyless.md) - Complete documentation
+- [Dogfooding](docs/dogfooding.md) - How wasmsign2 signs its own releases
 
 ## Inspecting a module
 

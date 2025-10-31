@@ -12,6 +12,7 @@ rust_library(
     srcs = glob(["src/**/*.rs"]),
     crate_name = "wasmsign2",
     edition = "2024",
+    compile_data = glob(["src/**/*.json"]),
     deps = [
         "@wasmsign2_deps//:anyhow",
         "@wasmsign2_deps//:ct-codecs",
@@ -20,9 +21,25 @@ rust_library(
         "@wasmsign2_deps//:hmac-sha256",
         "@wasmsign2_deps//:log",
         "@wasmsign2_deps//:regex",
+        "@wasmsign2_deps//:sha2",
         "@wasmsign2_deps//:ssh-keys",
         "@wasmsign2_deps//:thiserror",
         "@wasmsign2_deps//:wasi",
+        # Keyless signing dependencies (common to all targets)
+        "@wasmsign2_deps//:base64",
+        "@wasmsign2_deps//:chrono",
+        "@wasmsign2_deps//:const-oid",
+        "@wasmsign2_deps//:ecdsa",
+        "@wasmsign2_deps//:p256",
+        "@wasmsign2_deps//:pem",
+        "@wasmsign2_deps//:rustls-pki-types",
+        "@wasmsign2_deps//:rustls-webpki",
+        "@wasmsign2_deps//:serde",
+        "@wasmsign2_deps//:serde_json",
+        "@wasmsign2_deps//:spki",
+        "@wasmsign2_deps//:time",
+        "@wasmsign2_deps//:ureq-3.1.2",
+        "@wasmsign2_deps//:x509-parser",
     ],
 )
 

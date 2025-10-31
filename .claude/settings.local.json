@@ -14,7 +14,15 @@
       "WebFetch(domain:github.com)",
       "Bash(gh issue list:*)",
       "Read(//private/tmp/wasmsign2-test/**)",
-      "Bash(wasmtime run:*)"
+      "Bash(wasmtime run:*)",
+      "Bash(cosign version:*)",
+      "Bash(cargo build:*)",
+      "Read(//private/var/tmp/_bazel_r/4f31ed4545d363d9c57566925801787a/external/rules_rust++crate+wasmsign2_deps/**)",
+      "Bash(gh api:*)",
+      "mcp__sequential-thinking__sequentialthinking",
+      "Bash(cargo test:*)",
+      "WebFetch(domain:reports.zksecurity.xyz)",
+      "Bash(gh issue create:*)"
     ],
     "deny": [],
     "ask": []

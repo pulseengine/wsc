@@ -18,8 +18,29 @@ ed25519-compact = { version = "2.1.1", features = ["pem"] }
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
 hmac-sha256 = "1.1.12"
 log = "0.4.28"
+sha2 = "0.10"
 regex = "1.12.2"
 ssh-keys = "0.1.4"
 thiserror = "2.0.17"
 # WASI HTTP support - only used on wasm32-wasip2 via cfg guards
 wasi = "0.14.7"
+
+# Keyless signing dependencies
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+base64 = "0.22"
+x509-parser = "0.16"
+time = "0.3"
+chrono = "0.4"
+# ureq is only used on native (cfg-guarded), but must be unconditional for Bazel
+ureq = "3.1.2"
+# SPKI encoding for public keys
+spki = { version = "0.7", features = ["alloc"] }
+# ECDSA P-256 for keyless signing (required by Sigstore/Rekor hashedrekord)
+p256 = { version = "0.13", features = ["ecdsa", "pem"] }
+ecdsa = { version = "0.16", features = ["signing"] }
+# Certificate chain verification (WebPKI)
+rustls-webpki = { version = "0.103", default-features = false, features = ["std"] }
+rustls-pki-types = { version = "1.11", default-features = false }
+pem = "3.0"
+const-oid = { version = "0.9", default-features = false, features = ["db"] }
