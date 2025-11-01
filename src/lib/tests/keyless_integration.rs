@@ -78,6 +78,38 @@ fn test_github_actions_keyless_signing() {
     println!("Signed by: {}", identity);
     println!("Issuer: {}", issuer);
     println!("Rekor entry: {}", signature.rekor_entry.uuid);
+    println!("Log index: {}", signature.rekor_entry.log_index);
+    println!("Integrated time: {}", signature.rekor_entry.integrated_time);
+
+    // **CRITICAL TEST**: Verify the Rekor entry against production data
+    // This validates our SET and inclusion proof verification against REAL Rekor responses
+    println!("\n🔐 Testing Rekor verification with REAL production data...");
+
+    use wasmsign2::keyless::RekorClient;
+    let rekor_client = RekorClient::new();
+    let verification_result = rekor_client.verify_inclusion(&signature.rekor_entry);
+
+    match &verification_result {
+        Ok(true) => {
+            println!("✅ SET signature verified successfully!");
+            println!("✅ Merkle inclusion proof verified successfully!");
+            println!("✅ VALIDATION PASSED: Our implementation works with real Rekor data!");
+        }
+        Ok(false) => {
+            panic!("❌ Verification returned false (unexpected)");
+        }
+        Err(e) => {
+            println!("❌ Verification FAILED: {}", e);
+            println!("\n📋 Debug Info:");
+            println!("  Body length: {}", signature.rekor_entry.body.len());
+            println!("  Log ID: {}", signature.rekor_entry.log_id);
+            println!("  SET length: {}", signature.rekor_entry.signed_entry_timestamp.len());
+            println!("  Inclusion proof length: {}", signature.rekor_entry.inclusion_proof.len());
+            panic!("Rekor verification failed with real data: {}", e);
+        }
+    }
+
+    verification_result.expect("Rekor verification must succeed with real production data");
 
     // Verify the module structure is valid
     assert_eq!(signed_module.header, [0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00]);
@@ -168,7 +200,10 @@ fn test_signature_format_roundtrip() {
         RekorEntry {
             uuid: "test-uuid-12345".to_string(),
             log_index: 42,
+            body: "eyJ0ZXN0IjoidmFsdWUifQ==".to_string(),
+            log_id: "test-log-id".to_string(),
             inclusion_proof: vec![1, 2, 3, 4],
+            signed_entry_timestamp: "c2lnbmF0dXJl".to_string(),
             integrated_time: "2024-10-25T12:00:00Z".to_string(),
         },
         vec![0u8; 32], // SHA256 hash

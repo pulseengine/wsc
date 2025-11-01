@@ -11,6 +11,8 @@ pub mod fulcio;
 pub mod rekor;
 pub mod signer;
 pub mod cert_verifier;
+pub mod merkle;
+pub mod rekor_verifier;
 
 pub use format::*;
 pub use oidc::{
@@ -21,3 +23,4 @@ pub use fulcio::{FulcioClient, FulcioCertificate};
 pub use rekor::{RekorClient, RekorEntry};
 pub use signer::{KeylessConfig, KeylessSigner, KeylessVerifier};
 pub use cert_verifier::{CertificatePool, CertVerificationError};
+pub use rekor_verifier::RekorKeyring;

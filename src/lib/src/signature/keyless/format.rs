@@ -398,7 +398,10 @@ mod tests {
         let rekor_entry = RekorEntry {
             uuid: "test-uuid-1234".to_string(),
             log_index: 42,
+            body: "eyJ0ZXN0IjoidmFsdWUifQ==".to_string(),
+            log_id: "test-log-id".to_string(),
             inclusion_proof: vec![10, 20, 30, 40],
+            signed_entry_timestamp: "c2lnbmF0dXJl".to_string(),
             integrated_time: "2024-01-01T00:00:00Z".to_string(),
         };
         let module_hash = vec![0xde, 0xad, 0xbe, 0xef];
@@ -532,7 +535,10 @@ mod tests {
         let entry = RekorEntry {
             uuid: "test-uuid".to_string(),
             log_index: 123,
+            body: "eyJ0ZXN0IjoidmFsdWUifQ==".to_string(),
+            log_id: "test-log-id".to_string(),
             inclusion_proof: vec![1, 2, 3],
+            signed_entry_timestamp: "c2lnbmF0dXJl".to_string(),
             integrated_time: "2024-01-01T12:00:00Z".to_string(),
         };
 
@@ -542,7 +548,10 @@ mod tests {
 
         assert_eq!(deserialized.uuid, entry.uuid);
         assert_eq!(deserialized.log_index, entry.log_index);
+        assert_eq!(deserialized.body, entry.body);
+        assert_eq!(deserialized.log_id, entry.log_id);
         assert_eq!(deserialized.inclusion_proof, entry.inclusion_proof);
+        assert_eq!(deserialized.signed_entry_timestamp, entry.signed_entry_timestamp);
         assert_eq!(deserialized.integrated_time, entry.integrated_time);
     }
 

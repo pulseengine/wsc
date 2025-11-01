@@ -22,7 +22,11 @@
       "mcp__sequential-thinking__sequentialthinking",
       "Bash(cargo test:*)",
       "WebFetch(domain:reports.zksecurity.xyz)",
-      "Bash(gh issue create:*)"
+      "Bash(gh issue create:*)",
+      "WebFetch(domain:datatracker.ietf.org)",
+      "Bash(cat:*)",
+      "Bash(curl:*)",
+      "Bash(python3:*)"
     ],
     "deny": [],
     "ask": []

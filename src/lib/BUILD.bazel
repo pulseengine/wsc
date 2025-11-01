@@ -30,6 +30,7 @@ rust_library(
         "@wasmsign2_deps//:chrono",
         "@wasmsign2_deps//:const-oid",
         "@wasmsign2_deps//:ecdsa",
+        "@wasmsign2_deps//:hex",
         "@wasmsign2_deps//:p256",
         "@wasmsign2_deps//:pem",
         "@wasmsign2_deps//:rustls-pki-types",

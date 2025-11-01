@@ -46,9 +46,15 @@ pub struct RekorEntry {
     pub uuid: String,
     /// Log index
     pub log_index: u64,
-    /// Inclusion proof (for verification)
+    /// Base64-encoded entry body (needed for SET verification)
+    pub body: String,
+    /// Log ID (needed for SET verification)
+    pub log_id: String,
+    /// Inclusion proof (for verification) - JSON serialized
     pub inclusion_proof: Vec<u8>,
-    /// Signed entry timestamp (RFC3339)
+    /// Signed Entry Timestamp - base64-encoded signature
+    pub signed_entry_timestamp: String,
+    /// Integrated time timestamp (RFC3339)
     pub integrated_time: String,
 }
 
@@ -116,6 +122,8 @@ struct RekorEntryResponse {
 struct RekorVerification {
     #[serde(rename = "inclusionProof")]
     inclusion_proof: Option<RekorInclusionProof>,
+    #[serde(rename = "signedEntryTimestamp")]
+    signed_entry_timestamp: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -288,14 +296,24 @@ impl RekorClient {
             .next()
             .ok_or_else(|| WSError::RekorError("Empty response from Rekor".to_string()))?;
 
+        // Extract verification data
+        let verification = entry_data.verification.unwrap_or_else(|| RekorVerification {
+            inclusion_proof: None,
+            signed_entry_timestamp: None,
+        });
+
         // Extract inclusion proof if available
-        let inclusion_proof = entry_data
-            .verification
-            .and_then(|v| v.inclusion_proof)
+        let inclusion_proof = verification
+            .inclusion_proof
             .map(|proof| {
                 // Serialize the inclusion proof to JSON bytes
                 serde_json::to_vec(&proof).unwrap_or_default()
             })
+            .unwrap_or_default();
+
+        // Extract SET if available
+        let signed_entry_timestamp = verification
+            .signed_entry_timestamp
             .unwrap_or_default();
 
         // Convert integrated_time (Unix timestamp) to RFC3339
@@ -304,7 +322,10 @@ impl RekorClient {
         Ok(RekorEntry {
             uuid,
             log_index: entry_data.log_index,
+            body: entry_data.body,
+            log_id: entry_data.log_id,
             inclusion_proof,
+            signed_entry_timestamp,
             integrated_time,
         })
     }
@@ -428,11 +449,21 @@ impl RekorClient {
             .next()
             .ok_or_else(|| WSError::RekorError("Empty response from Rekor".to_string()))?;
 
+        // Extract verification data
+        let verification = entry_data.verification.unwrap_or_else(|| RekorVerification {
+            inclusion_proof: None,
+            signed_entry_timestamp: None,
+        });
+
         // Extract inclusion proof if available
-        let inclusion_proof = entry_data
-            .verification
-            .and_then(|v| v.inclusion_proof)
+        let inclusion_proof = verification
+            .inclusion_proof
             .map(|proof| serde_json::to_vec(&proof).unwrap_or_default())
+            .unwrap_or_default();
+
+        // Extract SET if available
+        let signed_entry_timestamp = verification
+            .signed_entry_timestamp
             .unwrap_or_default();
 
         // Convert integrated_time to RFC3339
@@ -441,21 +472,41 @@ impl RekorClient {
         Ok(RekorEntry {
             uuid,
             log_index: entry_data.log_index,
+            body: entry_data.body,
+            log_id: entry_data.log_id,
             inclusion_proof,
+            signed_entry_timestamp,
             integrated_time,
         })
     }
 
-    /// Verify inclusion proof from Rekor
+    /// Verify inclusion proof and SET for a Rekor entry
     ///
-    /// This is a stub implementation that will be completed in a future phase.
-    /// Full verification requires:
-    /// - Merkle tree verification
-    /// - Signed tree head verification
-    /// - Rekor public key verification
-    pub fn verify_inclusion(&self, _entry: &RekorEntry) -> Result<bool, WSError> {
-        // TODO: Implement full inclusion proof verification
-        // For now, return Ok(true) as a stub
+    /// This performs full cryptographic verification:
+    /// 1. Signed Entry Timestamp (SET) verification using ECDSA P-256
+    /// 2. Merkle tree inclusion proof verification (RFC 6962)
+    ///
+    /// # Arguments
+    /// * `entry` - The Rekor log entry to verify
+    ///
+    /// # Returns
+    /// `Ok(true)` if verification succeeds, `Err(WSError)` otherwise
+    ///
+    /// # Security
+    /// This ensures that:
+    /// - Rekor accepted and timestamped the entry (SET signature)
+    /// - The entry exists in the transparency log (inclusion proof)
+    /// - The transparency log is cryptographically sound (Merkle tree)
+    pub fn verify_inclusion(&self, entry: &RekorEntry) -> Result<bool, WSError> {
+        use super::rekor_verifier::RekorKeyring;
+
+        // Load Rekor public keys from trusted root
+        let keyring = RekorKeyring::from_embedded_trust_root()
+            .map_err(|e| WSError::RekorError(format!("Failed to load Rekor keys: {}", e)))?;
+
+        // Perform full verification (SET + inclusion proof)
+        keyring.verify_entry(entry)?;
+
         Ok(true)
     }
 }
@@ -506,13 +557,19 @@ mod tests {
         let entry = RekorEntry {
             uuid: "test-uuid-123".to_string(),
             log_index: 42,
+            body: "eyJ0ZXN0IjoidmFsdWUifQ==".to_string(),
+            log_id: "test-log-id".to_string(),
             inclusion_proof: vec![1, 2, 3, 4],
+            signed_entry_timestamp: "c2lnbmF0dXJl".to_string(),
             integrated_time: "2024-01-01T00:00:00Z".to_string(),
         };
 
         assert_eq!(entry.uuid, "test-uuid-123");
         assert_eq!(entry.log_index, 42);
+        assert_eq!(entry.body, "eyJ0ZXN0IjoidmFsdWUifQ==");
+        assert_eq!(entry.log_id, "test-log-id");
         assert_eq!(entry.inclusion_proof, vec![1, 2, 3, 4]);
+        assert_eq!(entry.signed_entry_timestamp, "c2lnbmF0dXJl");
         assert_eq!(entry.integrated_time, "2024-01-01T00:00:00Z");
     }
 
@@ -542,19 +599,21 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_inclusion_stub() {
+    fn test_verify_inclusion_rejects_invalid() {
         let client = RekorClient::new();
         let entry = RekorEntry {
             uuid: "test-uuid".to_string(),
             log_index: 1,
+            body: "eyJ0ZXN0IjoidmFsdWUifQ==".to_string(),
+            log_id: "test-log-id".to_string(),
             inclusion_proof: vec![],
+            signed_entry_timestamp: String::new(),
             integrated_time: "2024-01-01T00:00:00Z".to_string(),
         };
 
-        // Stub always returns Ok(true)
+        // Real verification should reject this invalid entry
         let result = client.verify_inclusion(&entry);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), true);
+        assert!(result.is_err(), "Should reject entry with no SET");
     }
 
     #[test]

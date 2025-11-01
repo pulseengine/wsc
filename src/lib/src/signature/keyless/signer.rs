@@ -198,7 +198,10 @@ impl KeylessSigner {
             RekorEntry {
                 uuid: "skipped".to_string(),
                 log_index: 0,
+                body: String::new(),
+                log_id: String::new(),
                 inclusion_proof: vec![],
+                signed_entry_timestamp: String::new(),
                 integrated_time: chrono::Utc::now().to_rfc3339(),
             }
         } else {

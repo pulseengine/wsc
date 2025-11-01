@@ -28,10 +28,12 @@ wasi = "0.14.7"
 # Keyless signing dependencies
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_jcs = "0.1"  # RFC 8785 JSON Canonicalization for Rekor SET verification
 base64 = "0.22"
 x509-parser = "0.16"
 time = "0.3"
 chrono = "0.4"
+hex = "0.4"
 # ureq is only used on native (cfg-guarded), but must be unconditional for Bazel
 ureq = "3.1.2"
 # SPKI encoding for public keys
