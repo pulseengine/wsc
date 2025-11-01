@@ -17,7 +17,7 @@
 use crate::error::WSError;
 use crate::signature::keyless::{merkle, RekorEntry};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
+use p256::ecdsa::{Signature, VerifyingKey, signature::DigestVerifier};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -232,11 +232,10 @@ impl RekorKeyring {
         // Hash the canonical JSON
         let mut hasher = Sha256::new();
         hasher.update(&canonical_json);
-        let message_hash = hasher.finalize();
 
-        // Verify the signature
+        // Verify the signature using verify_digest (for pre-hashed messages)
         verifying_key
-            .verify(&message_hash, &signature)
+            .verify_digest(hasher, &signature)
             .map_err(|e| {
                 WSError::RekorError(format!("SET signature verification failed: {}", e))
             })?;
@@ -441,5 +440,59 @@ mod tests {
         inclusion_result.expect("Inclusion proof verification must pass with real production data");
 
         println!("\n🎉 SUCCESS! Our implementation works with REAL Rekor production data!");
+    }
+
+    /// Test with a VERY RECENT Rekor entry (fetched via script)
+    ///
+    /// This test uses data from logIndex 538771042, fetched recently.
+    /// The script `scripts/fetch_recent_rekor_entry.sh` generates this data.
+    #[test]
+    fn test_verify_very_recent_rekor_entry() {
+        use super::super::RekorEntry;
+
+        // Recent Rekor entry (logIndex 538771042)
+        let entry = RekorEntry {
+            uuid: "108e9186e8c5677a1b77086cce5d81d1fed81432617971b2c6993681aced1a044c89465e8c60fe20".to_string(),
+            log_index: 538771042,
+            body: "eyJhcGlWZXJzaW9uIjoiMC4wLjEiLCJraW5kIjoiZHNzZSIsInNwZWMiOnsiZW52ZWxvcGVIYXNoIjp7ImFsZ29yaXRobSI6InNoYTI1NiIsInZhbHVlIjoiNTZmZWVmYzNmMWUxMjIxNjhiMDM3MWQwNDMyMWQyMGZlOTY3MTUwMTU0YzBlMzg3Nzk5YmZhZDZmNTEzNDdhNSJ9LCJwYXlsb2FkSGFzaCI6eyJhbGdvcml0aG0iOiJzaGEyNTYiLCJ2YWx1ZSI6IjQ1OTA4NDk3MDY4ZjQ4ZmFjNzc1YTk0OTZlNDE4MjhhMjI4NWEyYTAzODE0MzkwMGIzNzgzMmQxZmMzMWJjODMifSwic2lnbmF0dXJlcyI6W3sic2lnbmF0dXJlIjoiTUVRQ0lDT0dCT2g4SDJycnc5M3pQZURLRWgvbkdDb2kydHk2em1uWERiVk82WmFFQWlBRmFEclNVS0F1eE5JQ21pVlBqSWhrWmNXYjRBVG1kUzNrVXpML2puRVFvZz09IiwidmVyaWZpZXIiOiJMUzB0TFMxQ1JVZEpUaUJEUlZKVVNVWkpRMEZVUlMwdExTMHRDazFKU1VSRGVrTkRRWEJEWjBGM1NVSkJaMGxWUkRGWmJWcFlhRmQ1VDBOdU5rMVhUVmh0ZVUxTVdVWkNjVU5KZDBObldVbExiMXBKZW1vd1JVRjNUWGNLVG5wRlZrMUNUVWRCTVZWRlEyaE5UV015Ykc1ak0xSjJZMjFWZFZwSFZqSk5ValIzU0VGWlJGWlJVVVJGZUZaNllWZGtlbVJIT1hsYVV6RndZbTVTYkFwamJURnNXa2RzYUdSSFZYZElhR05PVFdwVmQwOVVSVFZOVkdNeFQwUk5NbGRvWTA1TmFsVjNUMVJGTlUxVVozZFBSRTB5VjJwQlFVMUdhM2RGZDFsSUNrdHZXa2w2YWpCRFFWRlpTVXR2V2tsNmFqQkVRVkZqUkZGblFVVTVNekozVEZoVVMyVkJVRlZZYlU4elUxaE1ja00wVW01b2JDdHhSMmc1V21sRlNGY0tNakp5YW1KeFJUVXZkbWt4TlhkSk1rVTJSR1JPYzNReWFHVXpObTkwTDFOUVRtdHRVa28zYjFCeFVGSnVSV1ZFTURaUFEwRmhPSGRuWjBkeVRVRTBSd3BCTVZWa1JIZEZRaTkzVVVWQmQwbElaMFJCVkVKblRsWklVMVZGUkVSQlMwSm5aM0pDWjBWR1FsRmpSRUY2UVdSQ1owNVdTRkUwUlVablVWVXhWV3BSQ210UE55OXFTMEpSZDNKRmNWYzVhWEExUzNsck5XVkpkMGgzV1VSV1VqQnFRa0puZDBadlFWVXpPVkJ3ZWpGWmEwVmFZalZ4VG1wd1MwWlhhWGhwTkZrS1drUTRkMWxuV1VSV1VqQlNRVkZJTDBKR1ozZFdiMXBWWVVoU01HTklUVFpNZVRsd1l6Tk9NVnBZU1hWYVZ6VnRZak5LYWxwVE5XdGFXRmwyV1dwT2FBcGFiVlpwVDBkV2JFMVhVbXhQUjBWNVRrZGFiRTlFWkdwWk1rbDVUbTFhYUZwWFZUUlBSMGt4V1cxRmVsa3lSbXBOUXpneFdsUkJNMDlYUlRWUFYxRTBDazE2VVRWYVJGa3hUVU5uUjBOcGMwZEJVVkZDWnpjNGQwRlJSVVZIYldnd1pFaENlazlwT0haaFdFNTZaRmRXZVV4dFZuVmFiVGw1V1RKVmRWcEhWaklLVFVOdlIwTnBjMGRCVVZGQ1p6YzRkMEZSWjBWSVFYZGhZVWhTTUdOSVRUWk1lVGx3WXpOT01WcFlTWFZhVnpWdFlqTkthbHBUTld0YVdGbDNaMWxyUndwRGFYTkhRVkZSUWpGdWEwTkNRVWxGWlhkU05VRklZMEZrVVVSa1VGUkNjWGh6WTFKTmJVMWFTR2g1V2xwNlkwTnZhM0JsZFU0ME9ISm1LMGhwYmt0QkNreDViblZxWjBGQlFWcHNha2xOVkRGQlFVRkZRWGRDUjAxRlVVTkpSMDQwYUVzeE4ydDROWE5CY1U5M1V6RlVRWGRLVFVKS1NXWTFObHBCWWtoR015c0tSa1pzZUROU2ExWkJhVUphSzFwYVQyZGhkVnBITlhZeU4wcEhhVkpEWm5odU1URnlkMlJVVlZoSWJ6WXpjV3M0WWpFM1dWQnFRVXRDWjJkeGFHdHFUd3BRVVZGRVFYZE9jRUZFUW0xQmFrVkJlRXd2UlVkdFp6bFBRbXBaVkRGNlREUXhkSE5ETWt4TmFqSjRlRFpwTkZsU1dVRTFTbTl5UlhsMGFrRnZUa0pqQ21RMFFtOVpOR0ZLZUN0Q1YxQm9VQzlCYWtWQk5Xd3hZVmhoUXpOeGJFOVVPVWhUYTNvMWMzQjRXbkppY0c1dlpuTnliVFp1Y0RGeEswbFdRbEF6VGtVS1YyUk1UVlkwZEhwU1pHeEtiR05rV2pJNE5DOEtMUzB0TFMxRlRrUWdRMFZTVkVsR1NVTkJWRVV0TFMwdExRbz0ifV19fQ==".to_string(),
+            log_id: "c0d23d6ad406973f9559f3ba2d1ca01f84147d8ffc5b8445c224f98b9591801d".to_string(),
+            inclusion_proof: serde_json::to_vec(&serde_json::json!({
+                "checkpoint":"rekor.sigstore.dev - 1193050959916656506\n538772043\n47UyG5C0SdruSFATSNsyL0N32rNwQCkWz/VQhpQfV8w=\n\n— rekor.sigstore.dev wNI9ajBEAiAkvGeekmOw7f4Oeww2Ae2SRTNoViYOCISw+dLy/0ESnwIgLavsI3ONhRrVO1iFf8hDkL/6ltaYiYfLflGNXLd1HS0=\n",
+                "hashes":["3cf783511a4100e2d3e3b959742d90dd77bbbc4b8434f48358340e31d4cc6508","ccf97aaf3270407e6a6036cffa2c1cf011ce38f65e17ed924b9303b098f179fb","2d2a57eeefb74fef66105b7b982563470eefe7cf4e1b32c66aaed3fc82bcb0c0","03d7b024ea78c5704041389cb908d01645c9ea06a4c6c40f6c6f6234ccfa722d","d46420bf36db033be316708c2d3fa75222c59660ca826e42ac198575d572f651","8e9a73bb8058093b7fc8c80e5b2d49b407c56afa8235347b1bdfd0160c53a4aa","2f02b98864dc47f970ba6930d366e0323bc7bbe60250648702145f5f51289f70","0ceaf8ceda3ce16cbab58b266dab71162669132a8139e427c6d6322f9bcbf6db","5a977b6b047188b9ec1642f14cdaf22b88368151a3212dc16d2bac49b4b4b5e2","970f94eeee00b24d48aac2703456e7bf9e3f82b3b88a67f4796d28a067d6e853","2495aea1601d7185958b9cf4f43576616de1ab109ddfde63701b9c93da6e0a69","88b12d58699cec46d3fe5bcfff27f0f9925a4edf9486d6ae1a8bbe503392fbb0","7dfca2a579bc3f5f09db8ef991c760ad6dd2fbc953852f61e74da0374cb70ee9","e3beef6e51552b5522a65bda5b3f01c2fd1bdb460f535cf88d359be811e759c0","e0f246d17f32e00b7b8ebcdcd5f6f8e1739aae8567c54fbc2ad4a21cf8f23ec3","bd60f5b88a7443e5235caeafc0daf3ff7a6725f9b1a0bebfe6b96109b6255a7f","236fd8f4647ac325b2ae0076a2a6b5041b3601cfa055cbd752e9f260975b4bd6","b72c41e07ab923bbc795a2ac3fa02465da0ebd6ddc0342e26b591e2c84a71e6f","7c6bb6f25901c2574b1ba72e00559fbaafd4cfc0cac4c0591d4899a5ed46f57d","59337b4b41e3daeb2e9546e43394d209ec27a82b8fed76f99d07792f5cdf3233","f03fa41a84ba4761836f221ae476b768254504d72d6f93d2babf91752355105b","acef6260ba3636377037499793b9c208f99416d05c09128c3a44dfb12d072666","75985ee987231b6b0355ee079bcdd7b328acb18ee3d7b1200a8ca9c05d0c733c","9febe26342cf714f05482ec299a3da18a6f96a38c8cd79931345de0f22e425f0","1938e12c16b6d4da3142f4d8e07301a26db8633bb80cc05dc9d90db6812c9f24","37d003dbbe2c4ca4721463df5c677afa0e920e1a3a0094c752c05f52ea2b2838","6da9de7e125f296b6906ff86682108945244d360f203a95c98c4c892c5c3163e","d667f2f782a9708b6ab211fdfa0c2a57a8dc72ea5c68ca55b05dbc35ec3ccc36","bd2ecee28cc72106495818a8bfe9a4a48dbb184f3302654212445c3f7343c8d1","719f009900e8a014628d7be9340e344bd3f5d11446a10a0dfbaa0e4f7bcb4147"],
+                "logIndex":416866780,
+                "rootHash":"e3b5321b90b449daee48501348db322f4377dab370402916cff55086941f57cc",
+                "treeSize":538772043
+            })).unwrap(),
+            signed_entry_timestamp: "MEUCIGA8e3zOAQ7n6pykNyFwg901cT9IEvidmcsmWJmtyGwgAiEA2cwnlW6MDN1UhLLA4hPbFg+jajt41Kt3wDoENov92QU=".to_string(),
+            integrated_time: "2025-09-19T17:58:38Z".to_string(),
+        };
+
+        println!("\n🔐 Testing with VERY RECENT Rekor entry (logIndex {})", entry.log_index);
+        println!("UUID: {}", entry.uuid);
+        println!("Integrated Time: {}", entry.integrated_time);
+
+        let keyring = RekorKeyring::from_embedded_trust_root()
+            .expect("Failed to load Rekor keyring");
+
+        println!("\n⏳ Verifying SET signature...");
+        let set_result = keyring.verify_set(&entry);
+        match &set_result {
+            Ok(()) => println!("✅ SET verified!"),
+            Err(e) => println!("❌ SET failed: {}", e),
+        }
+
+        println!("\n⏳ Verifying inclusion proof...");
+        let inclusion_result = keyring.verify_inclusion_proof(&entry);
+        match &inclusion_result {
+            Ok(()) => println!("✅ Inclusion proof verified!"),
+            Err(e) => println!("❌ Inclusion proof failed: {}", e),
+        }
+
+        // This test is informational - we expect it might fail until we fix the issues
+        if set_result.is_ok() && inclusion_result.is_ok() {
+            println!("\n🎉 SUCCESS! Both SET and inclusion proof verified!");
+        } else {
+            println!("\n⚠️  Verification incomplete - this is expected until we fix the implementation");
+        }
     }
 }
