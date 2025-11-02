@@ -150,7 +150,13 @@ pub fn verify_inclusion_proof(
     let mut current_index = leaf_index;
     let mut current_tree_size = tree_size;
 
-    for proof_hash in proof_hashes {
+    #[cfg(test)]
+    {
+        println!("   Starting with leaf hash: {}", hex::encode(current_hash));
+        println!("   Leaf index: {}, Tree size: {}", current_index, current_tree_size);
+    }
+
+    for (_i, proof_hash) in proof_hashes.iter().enumerate() {
         // Determine if current node is left or right child
         // The tree is built left-to-right, so we can determine position
         // based on whether the index is even or odd at each level
@@ -159,7 +165,16 @@ pub fn verify_inclusion_proof(
         // This is the largest power of 2 less than current_tree_size
         let left_subtree_size = largest_power_of_two_less_than(current_tree_size);
 
-        let (left, right) = if current_index < left_subtree_size {
+        let is_left_child = current_index < left_subtree_size;
+
+        #[cfg(test)]
+        let (left_hex, right_hex) = if is_left_child {
+            (hex::encode(current_hash), hex::encode(proof_hash))
+        } else {
+            (hex::encode(proof_hash), hex::encode(current_hash))
+        };
+
+        let (left, right) = if is_left_child {
             // Current node is in left subtree
             (&current_hash, proof_hash)
         } else {
@@ -169,6 +184,20 @@ pub fn verify_inclusion_proof(
 
         current_hash = compute_node_hash(left, right);
 
+        #[cfg(test)]
+        {
+            println!("\n   Step {}: {} child", _i + 1, if is_left_child { "LEFT" } else { "RIGHT" });
+            println!("     Left:   {}", left_hex);
+            println!("     Right:  {}", right_hex);
+            println!("     Result: {}", hex::encode(current_hash));
+            println!("     Index: {} -> {}, Tree size: {} -> {}",
+                current_index,
+                if current_index >= left_subtree_size { current_index - left_subtree_size } else { current_index },
+                current_tree_size,
+                if current_index >= left_subtree_size { current_tree_size - left_subtree_size } else { left_subtree_size }
+            );
+        }
+
         // Move up to parent level
         if current_index >= left_subtree_size {
             current_index -= left_subtree_size;
@@ -177,6 +206,9 @@ pub fn verify_inclusion_proof(
             current_tree_size = left_subtree_size;
         }
     }
+
+    #[cfg(test)]
+    println!("\n   Final computed root: {}", hex::encode(current_hash));
 
     // Final computed hash should match the expected root
     if &current_hash != expected_root {

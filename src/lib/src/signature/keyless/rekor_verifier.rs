@@ -267,9 +267,26 @@ impl RekorKeyring {
             .decode(&entry.body)
             .map_err(|e| WSError::RekorError(format!("Failed to decode body: {}", e)))?;
 
+        log::debug!("Inclusion proof verification:");
+        log::debug!("  Log Index: {}", entry.log_index);
+        log::debug!("  Tree Size: {}", proof.tree_size);
+        log::debug!("  Body size: {} bytes", body_bytes.len());
+
+        #[cfg(test)]
+        {
+            println!("\n🔍 Inclusion Proof Debug Info:");
+            println!("   Log Index: {}", entry.log_index);
+            println!("   Tree Size: {}", proof.tree_size);
+            println!("   Body size: {} bytes", body_bytes.len());
+            println!("   Body (first 100 bytes): {:?}", &body_bytes[..std::cmp::min(100, body_bytes.len())]);
+        }
+
         // Compute leaf hash (RFC 6962: SHA-256(0x00 || decoded_body))
         // Rekor's Merkle tree is built over the decoded entry bodies
         let leaf_hash = merkle::compute_leaf_hash(&body_bytes);
+
+        #[cfg(test)]
+        println!("   Computed leaf hash: {}", hex::encode(&leaf_hash));
 
         // Decode proof hashes from hex
         let proof_hashes: Result<Vec<[u8; 32]>, _> = proof
@@ -291,6 +308,9 @@ impl RekorKeyring {
             .collect();
         let proof_hashes = proof_hashes?;
 
+        #[cfg(test)]
+        println!("   Number of proof hashes: {}", proof_hashes.len());
+
         // Decode expected root hash from hex
         let expected_root = hex::decode(&proof.root_hash)
             .map_err(|e| WSError::RekorError(format!("Failed to decode root hash: {}", e)))?;
@@ -303,7 +323,13 @@ impl RekorKeyring {
         let mut root_arr = [0u8; 32];
         root_arr.copy_from_slice(&expected_root);
 
+        #[cfg(test)]
+        println!("   Expected root hash: {}", hex::encode(&root_arr));
+
         // Verify the inclusion proof using RFC 6962 algorithm
+        #[cfg(test)]
+        println!("\n⏳ Computing Merkle root from leaf...");
+
         merkle::verify_inclusion_proof(
             proof.log_index,
             proof.tree_size,
