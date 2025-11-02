@@ -475,32 +475,32 @@ mod tests {
         println!("\n🎉 SUCCESS! Our implementation works with REAL Rekor production data!");
     }
 
-    /// Test with a VERY RECENT Rekor entry (fetched via script)
+    /// Test with FRESH Rekor entry (fetched 2025-09-19)
     ///
-    /// This test uses data from logIndex 538771042, fetched recently.
-    /// The script `scripts/fetch_recent_rekor_entry.sh` generates this data.
+    /// This test uses current production data from logIndex 539031017.
+    /// Fetched fresh from rekor.sigstore.dev to ensure proof data is current.
     #[test]
-    fn test_verify_very_recent_rekor_entry() {
+    fn test_verify_fresh_rekor_entry_with_current_proof() {
         use super::super::RekorEntry;
 
-        // Recent Rekor entry (logIndex 538771042)
+        // Fresh Rekor entry (logIndex 539031017, fetched 2025-09-19)
         let entry = RekorEntry {
-            uuid: "108e9186e8c5677a1b77086cce5d81d1fed81432617971b2c6993681aced1a044c89465e8c60fe20".to_string(),
-            log_index: 538771042,
-            body: "eyJhcGlWZXJzaW9uIjoiMC4wLjEiLCJraW5kIjoiZHNzZSIsInNwZWMiOnsiZW52ZWxvcGVIYXNoIjp7ImFsZ29yaXRobSI6InNoYTI1NiIsInZhbHVlIjoiNTZmZWVmYzNmMWUxMjIxNjhiMDM3MWQwNDMyMWQyMGZlOTY3MTUwMTU0YzBlMzg3Nzk5YmZhZDZmNTEzNDdhNSJ9LCJwYXlsb2FkSGFzaCI6eyJhbGdvcml0aG0iOiJzaGEyNTYiLCJ2YWx1ZSI6IjQ1OTA4NDk3MDY4ZjQ4ZmFjNzc1YTk0OTZlNDE4MjhhMjI4NWEyYTAzODE0MzkwMGIzNzgzMmQxZmMzMWJjODMifSwic2lnbmF0dXJlcyI6W3sic2lnbmF0dXJlIjoiTUVRQ0lDT0dCT2g4SDJycnc5M3pQZURLRWgvbkdDb2kydHk2em1uWERiVk82WmFFQWlBRmFEclNVS0F1eE5JQ21pVlBqSWhrWmNXYjRBVG1kUzNrVXpML2puRVFvZz09IiwidmVyaWZpZXIiOiJMUzB0TFMxQ1JVZEpUaUJEUlZKVVNVWkpRMEZVUlMwdExTMHRDazFKU1VSRGVrTkRRWEJEWjBGM1NVSkJaMGxWUkRGWmJWcFlhRmQ1VDBOdU5rMVhUVmh0ZVUxTVdVWkNjVU5KZDBObldVbExiMXBKZW1vd1JVRjNUWGNLVG5wRlZrMUNUVWRCTVZWRlEyaE5UV015Ykc1ak0xSjJZMjFWZFZwSFZqSk5ValIzU0VGWlJGWlJVVVJGZUZaNllWZGtlbVJIT1hsYVV6RndZbTVTYkFwamJURnNXa2RzYUdSSFZYZElhR05PVFdwVmQwOVVSVFZOVkdNeFQwUk5NbGRvWTA1TmFsVjNUMVJGTlUxVVozZFBSRTB5VjJwQlFVMUdhM2RGZDFsSUNrdHZXa2w2YWpCRFFWRlpTVXR2V2tsNmFqQkVRVkZqUkZGblFVVTVNekozVEZoVVMyVkJVRlZZYlU4elUxaE1ja00wVW01b2JDdHhSMmc1V21sRlNGY0tNakp5YW1KeFJUVXZkbWt4TlhkSk1rVTJSR1JPYzNReWFHVXpObTkwTDFOUVRtdHRVa28zYjFCeFVGSnVSV1ZFTURaUFEwRmhPSGRuWjBkeVRVRTBSd3BCTVZWa1JIZEZRaTkzVVVWQmQwbElaMFJCVkVKblRsWklVMVZGUkVSQlMwSm5aM0pDWjBWR1FsRmpSRUY2UVdSQ1owNVdTRkUwUlVablVWVXhWV3BSQ210UE55OXFTMEpSZDNKRmNWYzVhWEExUzNsck5XVkpkMGgzV1VSV1VqQnFRa0puZDBadlFWVXpPVkJ3ZWpGWmEwVmFZalZ4VG1wd1MwWlhhWGhwTkZrS1drUTRkMWxuV1VSV1VqQlNRVkZJTDBKR1ozZFdiMXBWWVVoU01HTklUVFpNZVRsd1l6Tk9NVnBZU1hWYVZ6VnRZak5LYWxwVE5XdGFXRmwyV1dwT2FBcGFiVlpwVDBkV2JFMVhVbXhQUjBWNVRrZGFiRTlFWkdwWk1rbDVUbTFhYUZwWFZUUlBSMGt4V1cxRmVsa3lSbXBOUXpneFdsUkJNMDlYUlRWUFYxRTBDazE2VVRWYVJGa3hUVU5uUjBOcGMwZEJVVkZDWnpjNGQwRlJSVVZIYldnd1pFaENlazlwT0haaFdFNTZaRmRXZVV4dFZuVmFiVGw1V1RKVmRWcEhWaklLVFVOdlIwTnBjMGRCVVZGQ1p6YzRkMEZSWjBWSVFYZGhZVWhTTUdOSVRUWk1lVGx3WXpOT01WcFlTWFZhVnpWdFlqTkthbHBUTld0YVdGbDNaMWxyUndwRGFYTkhRVkZSUWpGdWEwTkNRVWxGWlhkU05VRklZMEZrVVVSa1VGUkNjWGh6WTFKTmJVMWFTR2g1V2xwNlkwTnZhM0JsZFU0ME9ISm1LMGhwYmt0QkNreDViblZxWjBGQlFWcHNha2xOVkRGQlFVRkZRWGRDUjAxRlVVTkpSMDQwYUVzeE4ydDROWE5CY1U5M1V6RlVRWGRLVFVKS1NXWTFObHBCWWtoR015c0tSa1pzZUROU2ExWkJhVUphSzFwYVQyZGhkVnBITlhZeU4wcEhhVkpEWm5odU1URnlkMlJVVlZoSWJ6WXpjV3M0WWpFM1dWQnFRVXRDWjJkeGFHdHFUd3BRVVZGRVFYZE9jRUZFUW0xQmFrVkJlRXd2UlVkdFp6bFBRbXBaVkRGNlREUXhkSE5ETWt4TmFqSjRlRFpwTkZsU1dVRTFTbTl5UlhsMGFrRnZUa0pqQ21RMFFtOVpOR0ZLZUN0Q1YxQm9VQzlCYWtWQk5Xd3hZVmhoUXpOeGJFOVVPVWhUYTNvMWMzQjRXbkppY0c1dlpuTnliVFp1Y0RGeEswbFdRbEF6VGtVS1YyUk1UVlkwZEhwU1pHeEtiR05rV2pJNE5DOEtMUzB0TFMxRlRrUWdRMFZTVkVsR1NVTkJWRVV0TFMwdExRbz0ifV19fQ==".to_string(),
+            uuid: "108e9186e8c5677a9a5627d43b3185112de9090e7e1a6ffb917a7cb16cb36a0e87d12d8d25ffd2d8".to_string(),
+            log_index: 539031017,
+            body: "eyJhcGlWZXJzaW9uIjoiMC4wLjEiLCJraW5kIjoiZHNzZSIsInNwZWMiOnsiZW52ZWxvcGVIYXNoIjp7ImFsZ29yaXRobSI6InNoYTI1NiIsInZhbHVlIjoiYTJjNzdjMzUzZTU3ZGQ1ODBjOTI4MWZiYTllYWU1MDU2YmFhNWU2ZDJiNTRlN2I1YjhlODczNTM2Yjk4MDBiZCJ9LCJwYXlsb2FkSGFzaCI6eyJhbGdvcml0aG0iOiJzaGEyNTYiLCJ2YWx1ZSI6IjcxNmU1Y2Q1OTlmZjc5NzQwY2RhODBmNDRjMDVjNTYzYzUwMGI1ZWYxMzU0MTVjNTgxOTJkNmYxYzAxNzkwZjEifSwic2lnbmF0dXJlcyI6W3sic2lnbmF0dXJlIjoiTUVZQ0lRQ0pEbjdtalBwV3pTVGdxejA0K3doaWlvSS9CM2k3SXNFRFB4ckk3emVCV1FJaEFQaFVsWmZkek1sb1RnSGNGUGxDdjBnU3Q5ZnBIVDBPK3krZEpWMDhvdDVhIiwidmVyaWZpZXIiOiJMUzB0TFMxQ1JVZEpUaUJEUlZKVVNVWkpRMEZVUlMwdExTMHRDazFKU1VSRVJFTkRRWEJMWjBGM1NVSkJaMGxWUm05dVRrOXBaWEJoZGtwR2NsWXdiV2RhZGtoWmFHWkxka3RKZDBObldVbExiMXBKZW1vd1JVRjNUWGNLVG5wRlZrMUNUVWRCTVZWRlEyaE5UV015Ykc1ak0xSjJZMjFWZFZwSFZqSk5ValIzU0VGWlJGWlJVVVJGZUZaNllWZGtlbVJIT1hsYVV6RndZbTVTYkFwamJURnNXa2RzYUdSSFZYZElhR05PVFdwVmQwOVVSVFZOVkd0M1RXcEJlVmRvWTA1TmFsVjNUMVJGTlUxVWEzaE5ha0Y1VjJwQlFVMUdhM2RGZDFsSUNrdHZXa2w2YWpCRFFWRlpTVXR2V2tsNmFqQkVRVkZqUkZGblFVVTVlalZRZW1SdWFqVkNNSGc0THk4dlEybGtaakpHYmtoRFN6UlZVa2xMTmtRd2NYVUthVmhMUVVSV1pFMXZSelU1V21sa1NtdFdTblkzU1UwMlJHRlFiMUJHU201WFMwSlRhV2hYWTJkQlZVOTNhR1p2WVhGUFEwRmlSWGRuWjBkMFRVRTBSd3BCTVZWa1JIZEZRaTkzVVVWQmQwbElaMFJCVkVKblRsWklVMVZGUkVSQlMwSm5aM0pDWjBWR1FsRmpSRUY2UVdSQ1owNVdTRkUwUlVablVWVlhhMWx2Q2t4TUwzUjNSelpRY1ZKaU9WbFpNSFZTYjBOUE9YbHpkMGgzV1VSV1VqQnFRa0puZDBadlFWVXpPVkJ3ZWpGWmEwVmFZalZ4VG1wd1MwWlhhWGhwTkZrS1drUTRkMWxuV1VSV1VqQlNRVkZJTDBKR1ozZFdiMXBWWVVoU01HTklUVFpNZVRsd1l6Tk9NVnBZU1hWYVZ6VnRZak5LYWxwVE5XdGFXRmwyVGtkUmVBcE5lbEV3VDFSTk5GcEVVbXROYWsweldYcGthRmx0Um0xYVYxVTBUVzFaZWs0eVdUUk5hbWN5VFhwS2FsbHFUbXRPUXpsdFdXMU5lVnBxYTNoYVJGcHRDbHB0U1RKYVZFVXhUVU5uUjBOcGMwZEJVVkZDWnpjNGQwRlJSVVZIYldnd1pFaENlazlwT0haaFdFNTZaRmRXZVV4dFZuVmFiVGw1V1RKVmRWcEhWaklLVFVOdlIwTnBjMGRCVVZGQ1p6YzRkMEZSWjBWSVFYZGhZVWhTTUdOSVRUWk1lVGx3WXpOT01WcFlTWFZhVnpWdFlqTkthbHBUTld0YVdGbDNaMWx6UndwRGFYTkhRVkZSUWpGdWEwTkNRVWxGWmxGU04wRklhMEZrZDBSa1VGUkNjWGh6WTFKTmJVMWFTR2g1V2xwNlkwTnZhM0JsZFU0ME9ISm1LMGhwYmt0QkNreDViblZxWjBGQlFWcHNhbGQwYXpWQlFVRkZRWGRDU1UxRldVTkpVVVJ6Ymxsc2NVdEJjMng1SzBob09UWmpVWGhaUm1VMlZtOVdWbHBJYVZGNWJHY0tjMDk1VkVSUUswbDBRVWxvUVVwWmJXNXRVSFp3Tmxoa1lsb3JlV1pPTUVKMGVWRmpabU5EUjFSS09VRnJUVEJwZW5CblpuTjZTMVZOUVc5SFEwTnhSd3BUVFRRNVFrRk5SRUV5WjBGTlIxVkRUVkZEYm05RE5tWXpTSEJ1UkUxamFXOURUVXBNVmxSa2VFRlJXa0ZJWm14cFZWbGhOWE4yYUhoVlYyTlFjVTV2Q21wMGJEQmtWRVJ4ZVhwRE5VVXJObUZXZFZGRFRVTnFNbFl4UVVkWWVXaEtWVFpoT0VkQloybERVMUY0VWxWS1QzcE1NMk00ZUdWSldGcFlVSHB5UzFjS1EzRndaV1psUkZBcldUVnZVWGRXTWl0MGN6VnFRVDA5Q2kwdExTMHRSVTVFSUVORlVsUkpSa2xEUVZSRkxTMHRMUzBLIn1dfX0=".to_string(),
             log_id: "c0d23d6ad406973f9559f3ba2d1ca01f84147d8ffc5b8445c224f98b9591801d".to_string(),
             inclusion_proof: serde_json::to_vec(&serde_json::json!({
-                "checkpoint":"rekor.sigstore.dev - 1193050959916656506\n538772043\n47UyG5C0SdruSFATSNsyL0N32rNwQCkWz/VQhpQfV8w=\n\n— rekor.sigstore.dev wNI9ajBEAiAkvGeekmOw7f4Oeww2Ae2SRTNoViYOCISw+dLy/0ESnwIgLavsI3ONhRrVO1iFf8hDkL/6ltaYiYfLflGNXLd1HS0=\n",
-                "hashes":["3cf783511a4100e2d3e3b959742d90dd77bbbc4b8434f48358340e31d4cc6508","ccf97aaf3270407e6a6036cffa2c1cf011ce38f65e17ed924b9303b098f179fb","2d2a57eeefb74fef66105b7b982563470eefe7cf4e1b32c66aaed3fc82bcb0c0","03d7b024ea78c5704041389cb908d01645c9ea06a4c6c40f6c6f6234ccfa722d","d46420bf36db033be316708c2d3fa75222c59660ca826e42ac198575d572f651","8e9a73bb8058093b7fc8c80e5b2d49b407c56afa8235347b1bdfd0160c53a4aa","2f02b98864dc47f970ba6930d366e0323bc7bbe60250648702145f5f51289f70","0ceaf8ceda3ce16cbab58b266dab71162669132a8139e427c6d6322f9bcbf6db","5a977b6b047188b9ec1642f14cdaf22b88368151a3212dc16d2bac49b4b4b5e2","970f94eeee00b24d48aac2703456e7bf9e3f82b3b88a67f4796d28a067d6e853","2495aea1601d7185958b9cf4f43576616de1ab109ddfde63701b9c93da6e0a69","88b12d58699cec46d3fe5bcfff27f0f9925a4edf9486d6ae1a8bbe503392fbb0","7dfca2a579bc3f5f09db8ef991c760ad6dd2fbc953852f61e74da0374cb70ee9","e3beef6e51552b5522a65bda5b3f01c2fd1bdb460f535cf88d359be811e759c0","e0f246d17f32e00b7b8ebcdcd5f6f8e1739aae8567c54fbc2ad4a21cf8f23ec3","bd60f5b88a7443e5235caeafc0daf3ff7a6725f9b1a0bebfe6b96109b6255a7f","236fd8f4647ac325b2ae0076a2a6b5041b3601cfa055cbd752e9f260975b4bd6","b72c41e07ab923bbc795a2ac3fa02465da0ebd6ddc0342e26b591e2c84a71e6f","7c6bb6f25901c2574b1ba72e00559fbaafd4cfc0cac4c0591d4899a5ed46f57d","59337b4b41e3daeb2e9546e43394d209ec27a82b8fed76f99d07792f5cdf3233","f03fa41a84ba4761836f221ae476b768254504d72d6f93d2babf91752355105b","acef6260ba3636377037499793b9c208f99416d05c09128c3a44dfb12d072666","75985ee987231b6b0355ee079bcdd7b328acb18ee3d7b1200a8ca9c05d0c733c","9febe26342cf714f05482ec299a3da18a6f96a38c8cd79931345de0f22e425f0","1938e12c16b6d4da3142f4d8e07301a26db8633bb80cc05dc9d90db6812c9f24","37d003dbbe2c4ca4721463df5c677afa0e920e1a3a0094c752c05f52ea2b2838","6da9de7e125f296b6906ff86682108945244d360f203a95c98c4c892c5c3163e","d667f2f782a9708b6ab211fdfa0c2a57a8dc72ea5c68ca55b05dbc35ec3ccc36","bd2ecee28cc72106495818a8bfe9a4a48dbb184f3302654212445c3f7343c8d1","719f009900e8a014628d7be9340e344bd3f5d11446a10a0dfbaa0e4f7bcb4147"],
-                "logIndex":416866780,
-                "rootHash":"e3b5321b90b449daee48501348db322f4377dab370402916cff55086941f57cc",
-                "treeSize":538772043
+                "checkpoint": "rekor.sigstore.dev - 1193050959916656506\n539031118\nNEHCG5HQbIsSdMRW54pptIdl4h8knIHowRFH/GCNwwA=\n\n— rekor.sigstore.dev wNI9ajBGAiEA8LPojWARu2NbMNSddBoQM/OaekD0MYVho7PXAFa9sicCIQC06sQYxoXA4+itzuEY/0A1nO7WYinFB0Khu8p/Eq5YDQ==\n",
+                "hashes": ["cd3c5790a7b60232dc5950c58b08234237300b5165275e3d5605b85d7509bb59","15a8792ad0a83708132722ef306ca31a00d3d7664c3dbf2093ece633f1b75ab7","73302dd0d76ea21d53802369a5dffade552c197c99d204071caaedce6ff5ba82","a00ec12fc8e33e68358f7609247b69b1069f9bd7f13d9937fbd0d5daaf89b2c2","bf0d53549839b4740c86b1e4cdd46961c9bf3d44afc7c71b9a9b3253ad95b55d","d1dee5e0b76732345be80119421919ac3c905a9ccd3bc857619c65fdadee9f05","b17333ab0b2d3d6ae048fe9cb61c0deac1e20f486fa838248df617b5ceac95b5","a4f830001a79a49c2b9989665d91e02d81c0d206aa4a094b78eb674952c6fb5e","f832f7b7d9464b248c85b288e23924a79afc6bc4410da86287c7d033eae9d772","5304bbcf2c6946304d656177f319412cec4a6b4240b666b13c0265e4703c3a4e","af74d488cfd82384eb29de0d1af0d8ca0625ad6ecd7e396cd70b111abf6e6fff","62019d914aac2d0649b3ce5cc21e53c0a8943e278071a3a8fc7cde841e08b538","44ca7ab95f93e42d97a0e89a4a574d08e4d96ec1adb24999ac9b16f9b7d3b8ef","2dc6246868db514821162526da0a1e41bc453e9b94df6c94285f4974ad2e733e","e42ea2d488e90d0ebec95c4bf1b8ec08921aa9e55a8d750c114716b8c0a440a4","8267cbedb753933a3e286c88cf4fe35f85a875eada5f13ff44b42f26edb29ce2","6e2872966575e708696ad863157242ece244cc3e84d08bbacee01efdd5b8013b","9f9ff81f9a7b92e44af4e8ad2aabcb7501870d2db78324e3f9bacd1f207d282f","b4f2ffb8d62862fb81bb31b7be17058bce386bea055d233edfc350878542585d","59337b4b41e3daeb2e9546e43394d209ec27a82b8fed76f99d07792f5cdf3233","f03fa41a84ba4761836f221ae476b768254504d72d6f93d2babf91752355105b","acef6260ba3636377037499793b9c208f99416d05c09128c3a44dfb12d072666","75985ee987231b6b0355ee079bcdd7b328acb18ee3d7b1200a8ca9c05d0c733c","9febe26342cf714f05482ec299a3da18a6f96a38c8cd79931345de0f22e425f0","1938e12c16b6d4da3142f4d8e07301a26db8633bb80cc05dc9d90db6812c9f24","37d003dbbe2c4ca4721463df5c677afa0e920e1a3a0094c752c05f52ea2b2838","6da9de7e125f296b6906ff86682108945244d360f203a95c98c4c892c5c3163e","d667f2f782a9708b6ab211fdfa0c2a57a8dc72ea5c68ca55b05dbc35ec3ccc36","bd2ecee28cc72106495818a8bfe9a4a48dbb184f3302654212445c3f7343c8d1","3447edd7c862c07a08ea03748fcba7a434976b2be6a0b198ef96038b9c20ec20"],
+                "logIndex": 417126755,
+                "rootHash": "3441c21b91d06c8b1274c456e78a69b48765e21f249c81e8c11147fc608dc300",
+                "treeSize": 539031118
             })).unwrap(),
-            signed_entry_timestamp: "MEUCIGA8e3zOAQ7n6pykNyFwg901cT9IEvidmcsmWJmtyGwgAiEA2cwnlW6MDN1UhLLA4hPbFg+jajt41Kt3wDoENov92QU=".to_string(),
-            integrated_time: "2025-09-19T17:58:38Z".to_string(),
+            signed_entry_timestamp: "MEYCIQDL9T2/4iJM+QIE5w3+qM+cw4evLgV227d/p5yF9F5V+gIhALymd5B6+A7LBDGtzMFjSV9BU84k1aH1tjhMzZKQGTY4".to_string(),
+            integrated_time: "2025-09-19T19:02:07Z".to_string(),
         };
 
-        println!("\n🔐 Testing with VERY RECENT Rekor entry (logIndex {})", entry.log_index);
+        println!("\n🔐 Testing with FRESH Rekor entry (logIndex {}, fetched 2025-09-19)", entry.log_index);
         println!("UUID: {}", entry.uuid);
         println!("Integrated Time: {}", entry.integrated_time);
 
@@ -511,21 +511,22 @@ mod tests {
         let set_result = keyring.verify_set(&entry);
         match &set_result {
             Ok(()) => println!("✅ SET verified!"),
-            Err(e) => println!("❌ SET failed: {}", e),
+            Err(e) => {
+                println!("❌ SET failed: {}", e);
+                panic!("SET verification must pass with fresh production data");
+            }
         }
 
         println!("\n⏳ Verifying inclusion proof...");
         let inclusion_result = keyring.verify_inclusion_proof(&entry);
         match &inclusion_result {
             Ok(()) => println!("✅ Inclusion proof verified!"),
-            Err(e) => println!("❌ Inclusion proof failed: {}", e),
+            Err(e) => {
+                println!("❌ Inclusion proof failed: {}", e);
+                panic!("Inclusion proof verification must pass with fresh production data");
+            }
         }
 
-        // This test is informational - we expect it might fail until we fix the issues
-        if set_result.is_ok() && inclusion_result.is_ok() {
-            println!("\n🎉 SUCCESS! Both SET and inclusion proof verified!");
-        } else {
-            println!("\n⚠️  Verification incomplete - this is expected until we fix the implementation");
-        }
+        println!("\n🎉 SUCCESS! Both SET and inclusion proof verified with fresh production data!");
     }
 }
