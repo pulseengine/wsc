@@ -12,11 +12,19 @@ A tool and library for signing WebAssembly modules with enhanced Rekor verificat
 - **Keyless Signing**: Full Sigstore/Fulcio integration with OIDC authentication
 - **CI/CD Pipeline**: Automated testing and release workflows
 
-## Attribution
+## About This Project
 
-This project evolved from [wasmsign2](https://github.com/wasm-signatures/wasmsign2) (MIT licensed), a reference implementation of the WebAssembly modules signatures proposal by Frank Denis. wsc maintains the core signing/verification functionality while adding production-ready enhancements.
+**wsc** is based on [wasmsign2](https://github.com/wasm-signatures/wasmsign2) by Frank Denis, a reference implementation of the [WebAssembly modules signatures proposal](https://github.com/wasm-signatures/design).
 
-Original wasmsign2 Copyright (c) 2024 Frank Denis
+We plan to add additional features to support production use cases, including:
+
+- Enhanced Rekor verification with checkpoint-based proofs
+- Bazel build system integration for hermetic builds
+- WebAssembly Component Model (WIT) support
+- Expanded keyless signing capabilities
+- Additional security hardening and validation
+
+MIT License - Original wasmsign2 Copyright (c) 2024 Frank Denis
 
 ## WASM Signatures
 
