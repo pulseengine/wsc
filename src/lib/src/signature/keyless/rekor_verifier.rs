@@ -71,6 +71,193 @@ pub struct InclusionProof {
     pub root_hash: String,
     #[serde(rename = "treeSize")]
     pub tree_size: u64,
+    #[serde(default)]
+    pub checkpoint: Option<String>,
+}
+
+/// Checkpoint (Signed Tree Head) - a cryptographically signed commitment to a tree state
+///
+/// Format:
+/// ```text
+/// <origin>
+/// <tree_size>
+/// <root_hash_base64>
+/// [<other_content>]...
+///
+/// — <name> <fingerprint+signature_base64>
+/// ```
+#[derive(Debug)]
+pub struct Checkpoint {
+    pub note: CheckpointNote,
+    pub signature: CheckpointSignature,
+}
+
+/// The unsigned portion of a checkpoint
+#[derive(Debug)]
+pub struct CheckpointNote {
+    /// Origin identifier (e.g., "rekor.sigstore.dev - 1193050959916656506")
+    pub origin: String,
+    /// Tree size (number of entries)
+    pub size: u64,
+    /// Root hash (32 bytes)
+    pub hash: [u8; 32],
+    /// Optional additional content lines
+    pub other_content: Vec<String>,
+}
+
+/// Checkpoint signature
+#[derive(Debug)]
+pub struct CheckpointSignature {
+    /// Name/identity of signer
+    pub name: String,
+    /// First 4 bytes of SHA-256(PKIX public key)
+    pub key_fingerprint: [u8; 4],
+    /// Raw signature bytes (ECDSA P-256)
+    pub raw: Vec<u8>,
+}
+
+impl Checkpoint {
+    /// Parse a checkpoint from string format
+    ///
+    /// Expected format:
+    /// ```text
+    /// <origin>\n
+    /// <size>\n
+    /// <hash_base64>\n
+    /// [<other_content>\n]...
+    /// \n
+    /// — <name> <fingerprint+signature_base64>\n
+    /// ```
+    pub fn decode(s: &str) -> Result<Self, WSError> {
+        let s = s.trim_matches('"').trim_matches('\n');
+
+        // Split into note and signature parts (separated by blank line)
+        let parts: Vec<&str> = s.split("\n\n").collect();
+        if parts.len() != 2 {
+            return Err(WSError::RekorError(
+                "Invalid checkpoint format: expected note and signature separated by blank line".to_string()
+            ));
+        }
+
+        let note = CheckpointNote::decode(parts[0])?;
+        let signature = CheckpointSignature::decode(parts[1])?;
+
+        Ok(Checkpoint { note, signature })
+    }
+}
+
+impl CheckpointNote {
+    /// Parse checkpoint note from string
+    fn decode(s: &str) -> Result<Self, WSError> {
+        let lines: Vec<&str> = s.split('\n').collect();
+        if lines.len() < 3 {
+            return Err(WSError::RekorError(
+                "Invalid checkpoint note: expected at least 3 lines".to_string()
+            ));
+        }
+
+        let origin = lines[0].to_string();
+        if origin.is_empty() {
+            return Err(WSError::RekorError(
+                "Invalid checkpoint: empty origin".to_string()
+            ));
+        }
+
+        let size: u64 = lines[1].parse()
+            .map_err(|_| WSError::RekorError("Invalid checkpoint: size not a valid u64".to_string()))?;
+
+        let hash_bytes = BASE64.decode(lines[2])
+            .map_err(|e| WSError::RekorError(format!("Invalid checkpoint: failed to decode hash: {}", e)))?;
+
+        if hash_bytes.len() != 32 {
+            return Err(WSError::RekorError(format!(
+                "Invalid checkpoint: hash must be 32 bytes, got {}",
+                hash_bytes.len()
+            )));
+        }
+
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&hash_bytes);
+
+        // Collect any additional content lines (excluding empty lines)
+        let other_content: Vec<String> = lines[3..]
+            .iter()
+            .filter(|line| !line.is_empty())
+            .map(|line| line.to_string())
+            .collect();
+
+        Ok(CheckpointNote {
+            origin,
+            size,
+            hash,
+            other_content,
+        })
+    }
+
+    /// Marshal checkpoint note to string (for signature verification)
+    ///
+    /// This is the exact bytes that get signed.
+    fn marshal(&self) -> String {
+        let hash_b64 = BASE64.encode(&self.hash);
+        let mut result = format!("{}\n{}\n{}\n", self.origin, self.size, hash_b64);
+
+        for line in &self.other_content {
+            result.push_str(line);
+            result.push('\n');
+        }
+
+        result
+    }
+}
+
+impl CheckpointSignature {
+    /// Parse checkpoint signature from string
+    ///
+    /// Expected format: `— <name> <fingerprint+signature_base64>`
+    fn decode(s: &str) -> Result<Self, WSError> {
+        let s = s.trim();
+
+        // Split by whitespace
+        let parts: Vec<&str> = s.split_whitespace().collect();
+        if parts.len() != 3 {
+            return Err(WSError::RekorError(format!(
+                "Invalid checkpoint signature format: expected 3 parts, got {}",
+                parts.len()
+            )));
+        }
+
+        // Verify em dash marker
+        if parts[0] != "—" {
+            return Err(WSError::RekorError(
+                "Invalid checkpoint signature: expected em dash (—)".to_string()
+            ));
+        }
+
+        let name = parts[1].to_string();
+
+        // Decode base64 signature (fingerprint + raw signature)
+        let sig_bytes = BASE64.decode(parts[2])
+            .map_err(|e| WSError::RekorError(format!("Failed to decode checkpoint signature: {}", e)))?;
+
+        if sig_bytes.len() < 5 {
+            return Err(WSError::RekorError(
+                "Checkpoint signature too short (need at least 5 bytes)".to_string()
+            ));
+        }
+
+        // First 4 bytes are the key fingerprint
+        let mut key_fingerprint = [0u8; 4];
+        key_fingerprint.copy_from_slice(&sig_bytes[0..4]);
+
+        // Remaining bytes are the raw signature
+        let raw = sig_bytes[4..].to_vec();
+
+        Ok(CheckpointSignature {
+            name,
+            key_fingerprint,
+            raw,
+        })
+    }
 }
 
 /// Pool of Rekor public keys for verification
@@ -80,6 +267,138 @@ pub struct RekorKeyring {
 }
 
 impl RekorKeyring {
+    /// Extract tree ID from a Rekor UUID
+    ///
+    /// UUID format: <tree_id (16 hex chars)><leaf_hash (64 hex chars)>
+    /// Total length: 80 characters
+    ///
+    /// Returns the tree ID as a decimal string for comparison with checkpoint origin
+    fn extract_tree_id_from_uuid(uuid: &str) -> Result<String, WSError> {
+        if uuid.len() != 80 {
+            return Err(WSError::RekorError(format!(
+                "Invalid UUID length: expected 80, got {}",
+                uuid.len()
+            )));
+        }
+
+        // First 16 characters are the tree ID (hex)
+        let tree_id_hex = &uuid[0..16];
+
+        // Convert hex to u64 (tree ID is 8 bytes)
+        let tree_id = u64::from_str_radix(tree_id_hex, 16)
+            .map_err(|e| WSError::RekorError(format!("Failed to parse tree ID from UUID: {}", e)))?;
+
+        // Return as decimal string for comparison with checkpoint origin
+        Ok(tree_id.to_string())
+    }
+
+    /// Validate checkpoint origin matches expected values
+    ///
+    /// Checks:
+    /// 1. Origin format is "<hostname> - <tree_id>"
+    /// 2. Hostname is "rekor.sigstore.dev" (expected Rekor production)
+    /// 3. Tree ID matches the tree ID in the entry's UUID
+    ///
+    /// This prevents accepting checkpoints from wrong logs or shards.
+    fn validate_checkpoint_origin(checkpoint: &Checkpoint, entry_uuid: &str) -> Result<(), WSError> {
+        // Parse origin: should be "<hostname> - <tree_id>"
+        let parts: Vec<&str> = checkpoint.note.origin.split(" - ").collect();
+        if parts.len() != 2 {
+            return Err(WSError::RekorError(format!(
+                "Invalid checkpoint origin format: expected '<hostname> - <tree_id>', got '{}'",
+                checkpoint.note.origin
+            )));
+        }
+
+        let hostname = parts[0];
+        let checkpoint_tree_id = parts[1];
+
+        // SECURITY: Validate hostname matches expected production Rekor
+        // This prevents accepting checkpoints from malicious or test logs
+        if hostname != "rekor.sigstore.dev" {
+            return Err(WSError::RekorError(format!(
+                "Unexpected checkpoint origin hostname: expected 'rekor.sigstore.dev', got '{}'",
+                hostname
+            )));
+        }
+
+        // SECURITY: Validate tree ID matches the entry's UUID
+        // This prevents cross-shard attacks where a checkpoint from one shard
+        // is used to verify an entry from a different shard
+        let entry_tree_id = Self::extract_tree_id_from_uuid(entry_uuid)?;
+        if checkpoint_tree_id != entry_tree_id {
+            return Err(WSError::RekorError(format!(
+                "Checkpoint tree ID mismatch: checkpoint has '{}', but entry UUID has '{}'",
+                checkpoint_tree_id, entry_tree_id
+            )));
+        }
+
+        log::debug!(
+            "Checkpoint origin validated: hostname={}, tree_id={}",
+            hostname,
+            checkpoint_tree_id
+        );
+        Ok(())
+    }
+
+    /// Compute the key fingerprint for a public key
+    ///
+    /// This is the first 4 bytes of SHA-256(PKIX-encoded public key).
+    /// Used in checkpoint signatures to identify which key signed the checkpoint.
+    fn compute_key_fingerprint(key: &VerifyingKey) -> Result<[u8; 4], WSError> {
+        // Encode the public key in PKIX (SubjectPublicKeyInfo) format
+        let pkix_bytes = key.to_encoded_point(false); // Uncompressed SEC1 encoding
+
+        // For ECDSA P-256, we need to construct the PKIX wrapper
+        // The PKIX format includes the algorithm identifier OID
+        // SEC1 encoding: 0x04 || x || y (65 bytes for P-256)
+
+        // PKIX format for ECDSA P-256:
+        // SEQUENCE {
+        //   SEQUENCE {
+        //     OBJECT IDENTIFIER ecPublicKey (1.2.840.10045.2.1)
+        //     OBJECT IDENTIFIER prime256v1 (1.2.840.10045.3.1.7)
+        //   }
+        //   BIT STRING (SEC1 point)
+        // }
+
+        // DER encoding of algorithm identifier for ECDSA P-256
+        let algorithm_id = [
+            0x30, 0x13, // SEQUENCE (19 bytes)
+            0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // OID ecPublicKey
+            0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, // OID prime256v1
+        ];
+
+        let point_bytes = pkix_bytes.as_bytes();
+
+        // Build the full PKIX structure
+        let mut pkix_der = Vec::new();
+        pkix_der.push(0x30); // SEQUENCE tag
+
+        // Calculate total length
+        let content_len = algorithm_id.len() + 2 + 1 + point_bytes.len(); // +2 for BIT STRING header, +1 for unused bits
+        pkix_der.push(content_len as u8);
+
+        // Add algorithm identifier
+        pkix_der.extend_from_slice(&algorithm_id);
+
+        // Add BIT STRING with the public key point
+        pkix_der.push(0x03); // BIT STRING tag
+        pkix_der.push((point_bytes.len() + 1) as u8); // Length (including unused bits byte)
+        pkix_der.push(0x00); // No unused bits
+        pkix_der.extend_from_slice(point_bytes);
+
+        // Compute SHA-256 hash
+        let mut hasher = Sha256::new();
+        hasher.update(&pkix_der);
+        let hash = hasher.finalize();
+
+        // Return first 4 bytes as fingerprint
+        let mut fingerprint = [0u8; 4];
+        fingerprint.copy_from_slice(&hash[0..4]);
+        Ok(fingerprint)
+    }
+
     /// Load Rekor public keys from embedded trusted_root.json
     pub fn from_embedded_trust_root() -> Result<Self, WSError> {
         let trusted_root_json = include_str!("trust_root/trusted_root.json");
@@ -244,6 +563,118 @@ impl RekorKeyring {
         Ok(())
     }
 
+    /// Verify a checkpoint signature
+    ///
+    /// This verifies that the checkpoint was signed by a trusted Rekor log key.
+    ///
+    /// # Arguments
+    /// * `checkpoint` - The parsed checkpoint to verify
+    /// * `log_id` - The log ID to find the matching public key
+    ///
+    /// # Returns
+    /// `Ok(())` if the checkpoint signature is valid, `Err(WSError)` otherwise
+    pub fn verify_checkpoint(&self, checkpoint: &Checkpoint, log_id: &str) -> Result<(), WSError> {
+        // Find the matching public key for this log
+        let verifying_key = self
+            .keys
+            .iter()
+            .find(|(key_id, _)| key_id == log_id)
+            .map(|(_, key)| key)
+            .ok_or_else(|| {
+                WSError::RekorError(format!(
+                    "No public key found for log ID: {}",
+                    log_id
+                ))
+            })?;
+
+        // SECURITY: Validate key fingerprint matches the public key
+        // This ensures we're using the correct key and prevents key confusion attacks
+        let computed_fingerprint = Self::compute_key_fingerprint(verifying_key)?;
+        if checkpoint.signature.key_fingerprint != computed_fingerprint {
+            return Err(WSError::RekorError(format!(
+                "Checkpoint key fingerprint mismatch: expected {:02x}{:02x}{:02x}{:02x}, got {:02x}{:02x}{:02x}{:02x}",
+                computed_fingerprint[0], computed_fingerprint[1], computed_fingerprint[2], computed_fingerprint[3],
+                checkpoint.signature.key_fingerprint[0], checkpoint.signature.key_fingerprint[1],
+                checkpoint.signature.key_fingerprint[2], checkpoint.signature.key_fingerprint[3]
+            )));
+        }
+
+        // Marshal the checkpoint note to get the bytes that were signed
+        let signed_bytes = checkpoint.note.marshal();
+
+        // Parse the signature (ECDSA DER or raw format)
+        let signature = Signature::from_der(&checkpoint.signature.raw)
+            .or_else(|_| {
+                // Try as raw 64-byte signature (r || s)
+                if checkpoint.signature.raw.len() == 64 {
+                    let mut arr = [0u8; 64];
+                    arr.copy_from_slice(&checkpoint.signature.raw);
+                    Signature::from_bytes(&arr.into())
+                        .map_err(|e| WSError::RekorError(format!("Failed to parse checkpoint signature: {}", e)))
+                } else {
+                    Err(WSError::RekorError(format!(
+                        "Invalid checkpoint signature format: {} bytes",
+                        checkpoint.signature.raw.len()
+                    )))
+                }
+            })?;
+
+        // Hash the signed bytes
+        let mut hasher = Sha256::new();
+        hasher.update(signed_bytes.as_bytes());
+
+        // Verify the signature using verify_digest (for pre-hashed messages)
+        verifying_key
+            .verify_digest(hasher, &signature)
+            .map_err(|e| {
+                WSError::RekorError(format!("Checkpoint signature verification failed: {}", e))
+            })?;
+
+        log::debug!("Checkpoint signature verified successfully");
+        Ok(())
+    }
+
+    /// Validate that a checkpoint is consistent with an inclusion proof
+    ///
+    /// This implements the consistency proof logic from sigstore-rs:
+    /// - If checkpoint.size == proof.tree_size: verify hashes match
+    /// - If checkpoint.size < proof.tree_size: verify consistency proof
+    ///
+    /// In practice, for inclusion proofs, checkpoint.size should equal proof.tree_size.
+    ///
+    /// # Arguments
+    /// * `checkpoint` - The checkpoint containing the tree state
+    /// * `proof_root_hash` - The root hash from the inclusion proof
+    /// * `proof_tree_size` - The tree size from the inclusion proof
+    ///
+    /// # Returns
+    /// `Ok(())` if checkpoint is valid for this proof, `Err(WSError)` otherwise
+    pub fn is_valid_for_proof(
+        checkpoint: &Checkpoint,
+        proof_root_hash: &[u8; 32],
+        proof_tree_size: u64,
+    ) -> Result<(), WSError> {
+        // For inclusion proofs, the checkpoint and proof should reference the same tree state
+        if checkpoint.note.size != proof_tree_size {
+            return Err(WSError::RekorError(format!(
+                "Checkpoint size ({}) does not match proof tree size ({})",
+                checkpoint.note.size, proof_tree_size
+            )));
+        }
+
+        // Verify root hashes match
+        if checkpoint.note.hash != *proof_root_hash {
+            return Err(WSError::RekorError(format!(
+                "Checkpoint root hash does not match proof root hash:\n  Checkpoint: {}\n  Proof:      {}",
+                hex::encode(&checkpoint.note.hash),
+                hex::encode(proof_root_hash)
+            )));
+        }
+
+        log::debug!("Checkpoint is valid for inclusion proof");
+        Ok(())
+    }
+
     /// Verify a Merkle tree inclusion proof
     ///
     /// # Arguments
@@ -329,6 +760,49 @@ impl RekorKeyring {
 
         #[cfg(test)]
         println!("   Expected root hash: {}", hex::encode(&root_arr));
+
+        // If checkpoint is present, use checkpoint-based verification (more robust)
+        // Otherwise, fall back to direct root hash comparison
+        if let Some(checkpoint_str) = &proof.checkpoint {
+            log::debug!("Using checkpoint-based verification");
+
+            #[cfg(test)]
+            println!("\n📋 Checkpoint-based verification:");
+
+            // Parse the checkpoint
+            let checkpoint = Checkpoint::decode(checkpoint_str)?;
+
+            #[cfg(test)]
+            {
+                println!("   Checkpoint origin: {}", checkpoint.note.origin);
+                println!("   Checkpoint size: {}", checkpoint.note.size);
+                println!("   Checkpoint root hash: {}", hex::encode(&checkpoint.note.hash));
+                println!("   Signature name: {}", checkpoint.signature.name);
+            }
+
+            // SECURITY: Validate checkpoint origin (hostname and tree ID)
+            RekorKeyring::validate_checkpoint_origin(&checkpoint, &entry.uuid)?;
+
+            #[cfg(test)]
+            println!("   ✅ Checkpoint origin validated");
+
+            // Verify checkpoint signature
+            self.verify_checkpoint(&checkpoint, &entry.log_id)?;
+
+            #[cfg(test)]
+            println!("   ✅ Checkpoint signature verified");
+
+            // Validate checkpoint is consistent with the proof
+            RekorKeyring::is_valid_for_proof(&checkpoint, &root_arr, proof.tree_size)?;
+
+            #[cfg(test)]
+            println!("   ✅ Checkpoint matches proof");
+        } else {
+            log::debug!("No checkpoint present, using direct verification");
+
+            #[cfg(test)]
+            println!("\n⚠️  No checkpoint available (old-style verification)");
+        }
 
         // Verify the inclusion proof using RFC 6962 algorithm
         #[cfg(test)]
@@ -483,24 +957,24 @@ mod tests {
     fn test_verify_fresh_rekor_entry_with_current_proof() {
         use super::super::RekorEntry;
 
-        // Fresh Rekor entry (logIndex 539031017, fetched 2025-09-19)
+        // Fresh Rekor entry with checkpoint (logIndex 539031017, fetched 2025-11-02)
         let entry = RekorEntry {
             uuid: "108e9186e8c5677a9a5627d43b3185112de9090e7e1a6ffb917a7cb16cb36a0e87d12d8d25ffd2d8".to_string(),
             log_index: 539031017,
             body: "eyJhcGlWZXJzaW9uIjoiMC4wLjEiLCJraW5kIjoiZHNzZSIsInNwZWMiOnsiZW52ZWxvcGVIYXNoIjp7ImFsZ29yaXRobSI6InNoYTI1NiIsInZhbHVlIjoiYTJjNzdjMzUzZTU3ZGQ1ODBjOTI4MWZiYTllYWU1MDU2YmFhNWU2ZDJiNTRlN2I1YjhlODczNTM2Yjk4MDBiZCJ9LCJwYXlsb2FkSGFzaCI6eyJhbGdvcml0aG0iOiJzaGEyNTYiLCJ2YWx1ZSI6IjcxNmU1Y2Q1OTlmZjc5NzQwY2RhODBmNDRjMDVjNTYzYzUwMGI1ZWYxMzU0MTVjNTgxOTJkNmYxYzAxNzkwZjEifSwic2lnbmF0dXJlcyI6W3sic2lnbmF0dXJlIjoiTUVZQ0lRQ0pEbjdtalBwV3pTVGdxejA0K3doaWlvSS9CM2k3SXNFRFB4ckk3emVCV1FJaEFQaFVsWmZkek1sb1RnSGNGUGxDdjBnU3Q5ZnBIVDBPK3krZEpWMDhvdDVhIiwidmVyaWZpZXIiOiJMUzB0TFMxQ1JVZEpUaUJEUlZKVVNVWkpRMEZVUlMwdExTMHRDazFKU1VSRVJFTkRRWEJMWjBGM1NVSkJaMGxWUm05dVRrOXBaWEJoZGtwR2NsWXdiV2RhZGtoWmFHWkxka3RKZDBObldVbExiMXBKZW1vd1JVRjNUWGNLVG5wRlZrMUNUVWRCTVZWRlEyaE5UV015Ykc1ak0xSjJZMjFWZFZwSFZqSk5ValIzU0VGWlJGWlJVVVJGZUZaNllWZGtlbVJIT1hsYVV6RndZbTVTYkFwamJURnNXa2RzYUdSSFZYZElhR05PVFdwVmQwOVVSVFZOVkd0M1RXcEJlVmRvWTA1TmFsVjNUMVJGTlUxVWEzaE5ha0Y1VjJwQlFVMUdhM2RGZDFsSUNrdHZXa2w2YWpCRFFWRlpTVXR2V2tsNmFqQkVRVkZqUkZGblFVVTVlalZRZW1SdWFqVkNNSGc0THk4dlEybGtaakpHYmtoRFN6UlZVa2xMTmtRd2NYVUthVmhMUVVSV1pFMXZSelU1V21sa1NtdFdTblkzU1UwMlJHRlFiMUJHU201WFMwSlRhV2hYWTJkQlZVOTNhR1p2WVhGUFEwRmlSWGRuWjBkMFRVRTBSd3BCTVZWa1JIZEZRaTkzVVVWQmQwbElaMFJCVkVKblRsWklVMVZGUkVSQlMwSm5aM0pDWjBWR1FsRmpSRUY2UVdSQ1owNVdTRkUwUlVablVWVlhhMWx2Q2t4TUwzUjNSelpRY1ZKaU9WbFpNSFZTYjBOUE9YbHpkMGgzV1VSV1VqQnFRa0puZDBadlFWVXpPVkJ3ZWpGWmEwVmFZalZ4VG1wd1MwWlhhWGhwTkZrS1drUTRkMWxuV1VSV1VqQlNRVkZJTDBKR1ozZFdiMXBWWVVoU01HTklUVFpNZVRsd1l6Tk9NVnBZU1hWYVZ6VnRZak5LYWxwVE5XdGFXRmwyVGtkUmVBcE5lbEV3VDFSTk5GcEVVbXROYWsweldYcGthRmx0Um0xYVYxVTBUVzFaZWs0eVdUUk5hbWN5VFhwS2FsbHFUbXRPUXpsdFdXMU5lVnBxYTNoYVJGcHRDbHB0U1RKYVZFVXhUVU5uUjBOcGMwZEJVVkZDWnpjNGQwRlJSVVZIYldnd1pFaENlazlwT0haaFdFNTZaRmRXZVV4dFZuVmFiVGw1V1RKVmRWcEhWaklLVFVOdlIwTnBjMGRCVVZGQ1p6YzRkMEZSWjBWSVFYZGhZVWhTTUdOSVRUWk1lVGx3WXpOT01WcFlTWFZhVnpWdFlqTkthbHBUTld0YVdGbDNaMWx6UndwRGFYTkhRVkZSUWpGdWEwTkNRVWxGWmxGU04wRklhMEZrZDBSa1VGUkNjWGh6WTFKTmJVMWFTR2g1V2xwNlkwTnZhM0JsZFU0ME9ISm1LMGhwYmt0QkNreDViblZxWjBGQlFWcHNhbGQwYXpWQlFVRkZRWGRDU1UxRldVTkpVVVJ6Ymxsc2NVdEJjMng1SzBob09UWmpVWGhaUm1VMlZtOVdWbHBJYVZGNWJHY0tjMDk1VkVSUUswbDBRVWxvUVVwWmJXNXRVSFp3Tmxoa1lsb3JlV1pPTUVKMGVWRmpabU5EUjFSS09VRnJUVEJwZW5CblpuTjZTMVZOUVc5SFEwTnhSd3BUVFRRNVFrRk5SRUV5WjBGTlIxVkRUVkZEYm05RE5tWXpTSEJ1UkUxamFXOURUVXBNVmxSa2VFRlJXa0ZJWm14cFZWbGhOWE4yYUhoVlYyTlFjVTV2Q21wMGJEQmtWRVJ4ZVhwRE5VVXJObUZXZFZGRFRVTnFNbFl4UVVkWWVXaEtWVFpoT0VkQloybERVMUY0VWxWS1QzcE1NMk00ZUdWSldGcFlVSHB5UzFjS1EzRndaV1psUkZBcldUVnZVWGRXTWl0MGN6VnFRVDA5Q2kwdExTMHRSVTVFSUVORlVsUkpSa2xEUVZSRkxTMHRMUzBLIn1dfX0=".to_string(),
             log_id: "c0d23d6ad406973f9559f3ba2d1ca01f84147d8ffc5b8445c224f98b9591801d".to_string(),
             inclusion_proof: serde_json::to_vec(&serde_json::json!({
-                "checkpoint": "rekor.sigstore.dev - 1193050959916656506\n539031118\nNEHCG5HQbIsSdMRW54pptIdl4h8knIHowRFH/GCNwwA=\n\n— rekor.sigstore.dev wNI9ajBGAiEA8LPojWARu2NbMNSddBoQM/OaekD0MYVho7PXAFa9sicCIQC06sQYxoXA4+itzuEY/0A1nO7WYinFB0Khu8p/Eq5YDQ==\n",
-                "hashes": ["cd3c5790a7b60232dc5950c58b08234237300b5165275e3d5605b85d7509bb59","15a8792ad0a83708132722ef306ca31a00d3d7664c3dbf2093ece633f1b75ab7","73302dd0d76ea21d53802369a5dffade552c197c99d204071caaedce6ff5ba82","a00ec12fc8e33e68358f7609247b69b1069f9bd7f13d9937fbd0d5daaf89b2c2","bf0d53549839b4740c86b1e4cdd46961c9bf3d44afc7c71b9a9b3253ad95b55d","d1dee5e0b76732345be80119421919ac3c905a9ccd3bc857619c65fdadee9f05","b17333ab0b2d3d6ae048fe9cb61c0deac1e20f486fa838248df617b5ceac95b5","a4f830001a79a49c2b9989665d91e02d81c0d206aa4a094b78eb674952c6fb5e","f832f7b7d9464b248c85b288e23924a79afc6bc4410da86287c7d033eae9d772","5304bbcf2c6946304d656177f319412cec4a6b4240b666b13c0265e4703c3a4e","af74d488cfd82384eb29de0d1af0d8ca0625ad6ecd7e396cd70b111abf6e6fff","62019d914aac2d0649b3ce5cc21e53c0a8943e278071a3a8fc7cde841e08b538","44ca7ab95f93e42d97a0e89a4a574d08e4d96ec1adb24999ac9b16f9b7d3b8ef","2dc6246868db514821162526da0a1e41bc453e9b94df6c94285f4974ad2e733e","e42ea2d488e90d0ebec95c4bf1b8ec08921aa9e55a8d750c114716b8c0a440a4","8267cbedb753933a3e286c88cf4fe35f85a875eada5f13ff44b42f26edb29ce2","6e2872966575e708696ad863157242ece244cc3e84d08bbacee01efdd5b8013b","9f9ff81f9a7b92e44af4e8ad2aabcb7501870d2db78324e3f9bacd1f207d282f","b4f2ffb8d62862fb81bb31b7be17058bce386bea055d233edfc350878542585d","59337b4b41e3daeb2e9546e43394d209ec27a82b8fed76f99d07792f5cdf3233","f03fa41a84ba4761836f221ae476b768254504d72d6f93d2babf91752355105b","acef6260ba3636377037499793b9c208f99416d05c09128c3a44dfb12d072666","75985ee987231b6b0355ee079bcdd7b328acb18ee3d7b1200a8ca9c05d0c733c","9febe26342cf714f05482ec299a3da18a6f96a38c8cd79931345de0f22e425f0","1938e12c16b6d4da3142f4d8e07301a26db8633bb80cc05dc9d90db6812c9f24","37d003dbbe2c4ca4721463df5c677afa0e920e1a3a0094c752c05f52ea2b2838","6da9de7e125f296b6906ff86682108945244d360f203a95c98c4c892c5c3163e","d667f2f782a9708b6ab211fdfa0c2a57a8dc72ea5c68ca55b05dbc35ec3ccc36","bd2ecee28cc72106495818a8bfe9a4a48dbb184f3302654212445c3f7343c8d1","3447edd7c862c07a08ea03748fcba7a434976b2be6a0b198ef96038b9c20ec20"],
+                "checkpoint": "rekor.sigstore.dev - 1193050959916656506\n539287087\nSqEgA/awGyWX5G6UkROunIvovqGy8AkwN6p5J9yOmTI=\n\n— rekor.sigstore.dev wNI9ajBFAiB7yTrgxhYBPoeAzrIZgAtot/FHaGVizXgg2WnEtaHszgIhAIs7wEP80CgUF38LT4f5VldywcllZyLoZBCPUbgcCd97\n",
+                "hashes": ["cd3c5790a7b60232dc5950c58b08234237300b5165275e3d5605b85d7509bb59","15a8792ad0a83708132722ef306ca31a00d3d7664c3dbf2093ece633f1b75ab7","73302dd0d76ea21d53802369a5dffade552c197c99d204071caaedce6ff5ba82","a00ec12fc8e33e68358f7609247b69b1069f9bd7f13d9937fbd0d5daaf89b2c2","bf0d53549839b4740c86b1e4cdd46961c9bf3d44afc7c71b9a9b3253ad95b55d","d1dee5e0b76732345be80119421919ac3c905a9ccd3bc857619c65fdadee9f05","b17333ab0b2d3d6ae048fe9cb61c0deac1e20f486fa838248df617b5ceac95b5","a4f830001a79a49c2b9989665d91e02d81c0d206aa4a094b78eb674952c6fb5e","f832f7b7d9464b248c85b288e23924a79afc6bc4410da86287c7d033eae9d772","5304bbcf2c6946304d656177f319412cec4a6b4240b666b13c0265e4703c3a4e","af74d488cfd82384eb29de0d1af0d8ca0625ad6ecd7e396cd70b111abf6e6fff","62019d914aac2d0649b3ce5cc21e53c0a8943e278071a3a8fc7cde841e08b538","44ca7ab95f93e42d97a0e89a4a574d08e4d96ec1adb24999ac9b16f9b7d3b8ef","2dc6246868db514821162526da0a1e41bc453e9b94df6c94285f4974ad2e733e","e42ea2d488e90d0ebec95c4bf1b8ec08921aa9e55a8d750c114716b8c0a440a4","8267cbedb753933a3e286c88cf4fe35f85a875eada5f13ff44b42f26edb29ce2","6e2872966575e708696ad863157242ece244cc3e84d08bbacee01efdd5b8013b","9f9ff81f9a7b92e44af4e8ad2aabcb7501870d2db78324e3f9bacd1f207d282f","b4f2ffb8d62862fb81bb31b7be17058bce386bea055d233edfc350878542585d","59337b4b41e3daeb2e9546e43394d209ec27a82b8fed76f99d07792f5cdf3233","f03fa41a84ba4761836f221ae476b768254504d72d6f93d2babf91752355105b","acef6260ba3636377037499793b9c208f99416d05c09128c3a44dfb12d072666","75985ee987231b6b0355ee079bcdd7b328acb18ee3d7b1200a8ca9c05d0c733c","9febe26342cf714f05482ec299a3da18a6f96a38c8cd79931345de0f22e425f0","1938e12c16b6d4da3142f4d8e07301a26db8633bb80cc05dc9d90db6812c9f24","37d003dbbe2c4ca4721463df5c677afa0e920e1a3a0094c752c05f52ea2b2838","6da9de7e125f296b6906ff86682108945244d360f203a95c98c4c892c5c3163e","d667f2f782a9708b6ab211fdfa0c2a57a8dc72ea5c68ca55b05dbc35ec3ccc36","bd2ecee28cc72106495818a8bfe9a4a48dbb184f3302654212445c3f7343c8d1","b03dfef61d6e459901f9391e1f32fd2c77a1e599b36868ea3c3246d49c936eb4"],
                 "logIndex": 417126755,
-                "rootHash": "3441c21b91d06c8b1274c456e78a69b48765e21f249c81e8c11147fc608dc300",
-                "treeSize": 539031118
+                "rootHash": "4aa12003f6b01b2597e46e949113ae9c8be8bea1b2f0093037aa7927dc8e9932",
+                "treeSize": 539287087
             })).unwrap(),
             signed_entry_timestamp: "MEYCIQDL9T2/4iJM+QIE5w3+qM+cw4evLgV227d/p5yF9F5V+gIhALymd5B6+A7LBDGtzMFjSV9BU84k1aH1tjhMzZKQGTY4".to_string(),
             integrated_time: "2025-09-19T19:02:07Z".to_string(),
         };
 
-        println!("\n🔐 Testing with FRESH Rekor entry (logIndex {}, fetched 2025-09-19)", entry.log_index);
+        println!("\n🔐 Testing with FRESH Rekor entry WITH CHECKPOINT (logIndex {}, fetched 2025-11-02)", entry.log_index);
         println!("UUID: {}", entry.uuid);
         println!("Integrated Time: {}", entry.integrated_time);
 
