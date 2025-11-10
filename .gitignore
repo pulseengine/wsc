@@ -11,6 +11,13 @@ lcov.info
 *.profraw
 *.profdata
 
+# Memory profiling
+memory-profiling_*.dat
+dhat-heap.json
+profiles/
+*.massif
+*.massif.out
+
 # Temporary files
 *~
 *.swp
@@ -23,8 +30,9 @@ lcov.info
 *.key
 *.key2
 
-# Scripts (local testing)
+# Scripts (local testing) - but allow scripts/ directory
 *.sh
+!scripts/*.sh
 
 # Signatures
 /signature

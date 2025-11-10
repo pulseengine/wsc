@@ -1,0 +1,34 @@
+FROM rust:1.90-bookworm
+
+# Install dependencies
+RUN apt-get update && \
+    apt-get install -y build-essential gcc git && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Rust nightly for building ByteHound
+RUN rustup toolchain install nightly
+
+# Build ByteHound
+RUN git clone https://github.com/koute/bytehound.git /bytehound && \
+    cd /bytehound && \
+    cargo +nightly build --release -p bytehound-preload && \
+    cargo +nightly build --release -p bytehound-cli && \
+    cp target/release/libbytehound.so /usr/local/lib/ && \
+    cp target/release/bytehound /usr/local/bin/
+
+# Switch to stable Rust for building project
+RUN rustup default stable
+
+WORKDIR /workspace
+
+# Copy project files
+COPY . .
+
+# Build the project
+RUN cargo build --release
+
+# Set environment for ByteHound
+ENV MEMORY_PROFILER_LOG=warn
+ENV LD_PRELOAD=/usr/local/lib/libbytehound.so
+
+CMD ["cargo", "test", "--release", "--", "--test-threads=1", "--nocapture"]

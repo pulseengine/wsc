@@ -1,0 +1,83 @@
+name: Memory Profiling
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/**/*.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+env:
+  RUST_VERSION: "1.90.0"
+
+jobs:
+  bytehound-profile:
+    name: ByteHound Memory Profile
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential gcc
+
+    - name: Install Rust nightly (for ByteHound build)
+      run: |
+        rustup toolchain install nightly
+        rustup default nightly
+
+    - name: Clone and build ByteHound
+      run: |
+        git clone https://github.com/koute/bytehound.git /tmp/bytehound
+        cd /tmp/bytehound
+        cargo build --release -p bytehound-preload
+        cargo build --release -p bytehound-cli
+
+        # Copy binaries to accessible location
+        cp target/release/libbytehound.so $HOME/
+        cp target/release/bytehound $HOME/
+
+    - name: Switch back to stable Rust
+      run: rustup default stable
+
+    - name: Build wsc tests
+      run: cargo test --no-run --release
+
+    - name: Run tests with ByteHound profiling
+      env:
+        MEMORY_PROFILER_LOG: warn
+        LD_PRELOAD: ${{ env.HOME }}/libbytehound.so
+      run: |
+        # Run a subset of tests or specific test
+        cargo test --release -- --test-threads=1 --nocapture || true
+
+        echo "ByteHound profiling data generated"
+        ls -lh memory-profiling_*.dat
+
+    - name: Upload profiling data
+      uses: actions/upload-artifact@v4
+      with:
+        name: bytehound-profiles
+        path: memory-profiling_*.dat
+        retention-days: 7
+
+    - name: Generate ByteHound summary
+      run: |
+        if [ -f memory-profiling_*.dat ]; then
+          echo "## 📊 ByteHound Memory Profile" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Memory profiling data has been collected." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### How to view:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Download the \`bytehound-profiles\` artifact" >> $GITHUB_STEP_SUMMARY
+          echo "2. Run: \`bytehound server memory-profiling_*.dat\`" >> $GITHUB_STEP_SUMMARY
+          echo "3. Open http://localhost:8080 in your browser" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Files:**" >> $GITHUB_STEP_SUMMARY
+          ls -lh memory-profiling_*.dat | awk '{print "- " $9 " (" $5 ")"}' >> $GITHUB_STEP_SUMMARY
+        fi
