@@ -1,6 +1,6 @@
-//! WebAssembly component that exports the wasmsign signing interface
+//! WebAssembly component that exports the wsc signing interface
 //!
-//! This component wraps the wasmsign2 library and exports a clean WIT interface
+//! This component wraps the wsc library and exports a clean WIT interface
 //! for key generation, signing, and verification operations.
 
 #[cfg(target_arch = "wasm32")]
@@ -91,8 +91,8 @@ impl Guest for Component {
         // Verify based on signature type
         match pk.verify(&mut reader, detached_sig.as_deref()) {
             Ok(()) => Ok(true),
-            Err(wasmsign2::WSError::NoSignatures) => Ok(false),
-            Err(wasmsign2::WSError::VerificationFailed) => Ok(false),
+            Err(wsc::WSError::NoSignatures) => Ok(false),
+            Err(wsc::WSError::VerificationFailed) => Ok(false),
             Err(e) => Err(format!("Verification error: {}", e)),
         }
     }

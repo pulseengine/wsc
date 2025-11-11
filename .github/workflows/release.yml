@@ -101,7 +101,7 @@ jobs:
           cat wsc-cli.wasm.sha256
         fi
 
-    - name: Build wasmsign2 Native CLI
+    - name: Build wsc Native CLI
       run: |
         echo "Building wsc native CLI for signing..."
         cargo build --release --bin wsc
@@ -109,32 +109,32 @@ jobs:
         # Verify the CLI works
         ./target/release/wsc --version || echo "CLI version check skipped"
 
-        echo "✅ Native wasmsign2 CLI built"
+        echo "✅ Native wsc CLI built"
 
-    - name: Sign WASM Files with wasmsign2 (Keyless)
+    - name: Sign WASM Files with wsc (Keyless)
       run: |
-        echo "🔐 Signing WASM artifacts with wasmsign2 keyless signing..."
+        echo "🔐 Signing WASM artifacts with wsc keyless signing..."
 
         # Sign the component WASM with keyless signing
         echo "Signing wsc-component.wasm..."
         ./target/release/wsc sign --keyless \
           --input-file wsc-component.wasm \
-          --output-file wasmsign2-component.signed.wasm
+          --output-file wsc-component.signed.wasm
 
         # Create a detached signature for verification
-        mv wasmsign2-component.signed.wasm wsc-component.wasm
+        mv wsc-component.signed.wasm wsc-component.wasm
 
         # Sign the CLI WASM if it exists
         if [ -f wsc-cli.wasm ]; then
           echo "Signing wsc-cli.wasm..."
           ./target/release/wsc sign --keyless \
             --input-file wsc-cli.wasm \
-            --output-file wasmsign2-cli.signed.wasm
+            --output-file wsc-cli.signed.wasm
 
-          mv wasmsign2-cli.signed.wasm wsc-cli.wasm
+          mv wsc-cli.signed.wasm wsc-cli.wasm
         fi
 
-        echo "✅ WASM files signed with wasmsign2 (keyless)"
+        echo "✅ WASM files signed with wsc (keyless)"
         echo ""
         echo "📋 Signature Details:"
         echo "  - Identity: GitHub Actions OIDC"
@@ -217,12 +217,12 @@ jobs:
     - name: Sign OCI Images with Cosign
       run: |
         # Sign using keyless signing with GitHub OIDC
-        echo "Signing wasmsign2 component..."
+        echo "Signing wsc component..."
         cosign sign --yes "${IMAGE_TAG}"
         cosign sign --yes "${IMAGE_LATEST}"
 
         if [ -n "${CLI_TAG:-}" ]; then
-          echo "Signing wasmsign2 CLI..."
+          echo "Signing wsc CLI..."
           cosign sign --yes "${CLI_TAG}"
           cosign sign --yes "${CLI_LATEST}"
         fi
@@ -317,12 +317,12 @@ jobs:
 
           ### 🔐 Security Features
 
-          - ✅ **WASM Module Signing** - Signed with wasmsign2 keyless signing (dogfooding!)
+          - ✅ **WASM Module Signing** - Signed with wsc keyless signing (dogfooding!)
           - ✅ **OCI Artifact Signing** - Signed with Cosign using GitHub OIDC (keyless)
           - ✅ **SLSA Provenance** - Build attestation included
           - ✅ **SHA256 Checksums** - For download verification
 
-          **wasmsign2 Keyless Signing:**
+          **wsc Keyless Signing:**
           - Identity: GitHub Actions OIDC
           - Certificate: Short-lived from Fulcio (Sigstore)
           - Transparency: Logged in Rekor transparency log
@@ -361,10 +361,10 @@ jobs:
 
           ### 🔍 Verification
 
-          #### Verify WASM Module Signature (wasmsign2)
+          #### Verify WASM Module Signature (wsc)
           ```bash
-          # Download a release (once wasmsign2 verification is implemented)
-          # wasmsign2 verify --keyless \
+          # Download a release (once wsc verification is implemented)
+          # wsc verify --keyless \
           #   --identity "https://github.com/${{ github.repository }}" \
           #   --issuer "https://token.actions.githubusercontent.com" \
           #   --input-file wsc-component.wasm
@@ -392,7 +392,7 @@ jobs:
 
           All releases are:
           - Built in GitHub Actions with full transparency
-          - Signed with wasmsign2 keyless signing (WASM modules)
+          - Signed with wsc keyless signing (WASM modules)
           - Signed with Cosign using keyless signing (OCI artifacts)
           - Attested with SLSA provenance
           - Checksummed with SHA256
@@ -429,7 +429,7 @@ jobs:
         echo "- **OCI Artifact (latest)**: \`${IMAGE_LATEST}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 🔐 Security" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ WASM modules signed with wasmsign2 (keyless)" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ WASM modules signed with wsc (keyless)" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ OCI artifact signed with Cosign (keyless OIDC)" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ SLSA provenance attestation" >> $GITHUB_STEP_SUMMARY
         echo "- ✅ SHA256 checksum provided" >> $GITHUB_STEP_SUMMARY

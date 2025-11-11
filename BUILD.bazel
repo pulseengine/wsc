@@ -1,6 +1,6 @@
-"""WebAssembly Module Signing Tool - wasmsign2
+"""WebAssembly Signature Component - wsc
 
-This workspace provides both native and WebAssembly builds of wasmsign2, a tool for
+This workspace provides both native and WebAssembly builds of wsc, a tool for
 signing and verifying WebAssembly modules using EdDSA signatures.
 
 ## Architecture
@@ -12,7 +12,7 @@ signing and verifying WebAssembly modules using EdDSA signatures.
 
 ## Key Targets
 
-- `//src/lib:wasmsign2` - Core Rust library
+- `//src/lib:wsc` - Core Rust library
 - `//wit:wasmsign_wit` - WIT interface for component model
 - `//src/component:signing_lib` - WASM component (signing-lib.wasm)
 - `//src/cli:wasmsign_cli` - CLI tool (native and WASI)
@@ -38,6 +38,7 @@ bazel build //src/cli:wasmsign_cli
 - Module splitting for partial verification
 - Batch verification matrix
 - GitHub public key fetching (native builds only)
+- Keyless signing with Sigstore/Rekor
 """
 
 package(default_visibility = ["//visibility:public"])

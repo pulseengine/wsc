@@ -1,6 +1,6 @@
-"""WebAssembly component that exports the wasmsign signing interface
+"""WebAssembly component that exports the wsc signing interface
 
-This component wraps the wasmsign2 library and exposes a clean WIT interface
+This component wraps the wsc library and exposes a clean WIT interface
 for reuse by other components, JavaScript via jco, or integration into CI/CD.
 
 The rust_wasm_component_bindgen rule uses Cargo to build, so it automatically
@@ -12,11 +12,13 @@ load("@rules_wasm_component//rust:defs.bzl", "rust_wasm_component_bindgen")
 package(default_visibility = ["//visibility:public"])
 
 # Component library (exports WIT interface)
+# This creates both "signing_lib" and "signing_lib_release" targets
+# due to profiles = ["release"]
 rust_wasm_component_bindgen(
     name = "signing_lib",
     srcs = ["src/lib.rs"],
     profiles = ["release"],
     wit = "//wit:wasmsign_wit",
-    # Add wasmsign2 library as Bazel dependency
-    deps = ["//src/lib:wasmsign2"],
+    # Add wsc library as Bazel dependency
+    deps = ["//src/lib:wsc"],
 )
