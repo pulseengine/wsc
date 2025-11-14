@@ -18,6 +18,12 @@ mod wasm_module;
 /// across TPM 2.0, Secure Elements, TrustZone, and software fallback.
 pub mod platform;
 
+/// Certificate provisioning for IoT devices
+///
+/// Provides tools for offline certificate provisioning in factory/manufacturing
+/// environments. Includes CA management, device identity, and provisioning workflows.
+pub mod provisioning;
+
 #[allow(unused_imports)]
 pub use error::*;
 #[allow(unused_imports)]

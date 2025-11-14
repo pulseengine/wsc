@@ -100,6 +100,13 @@ pub enum WSError {
 
     #[error("No space available in hardware key storage")]
     NoSpace,
+
+    // Certificate provisioning errors
+    #[error("Verification error: {0}")]
+    VerificationError(String),
+
+    #[error("Unsupported algorithm: {0}")]
+    UnsupportedAlgorithm(String),
 }
 
 // X509 error conversion
