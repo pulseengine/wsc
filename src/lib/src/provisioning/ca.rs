@@ -22,7 +22,7 @@
 
 use crate::error::WSError;
 use crate::provisioning::{CertificateConfig, DeviceIdentity};
-use crate::signature::{KeyPair, PublicKey};
+use crate::signature::{KeyPair, PublicKey, SecretKey};
 use std::path::Path;
 use std::fs;
 use base64::Engine;
@@ -224,6 +224,23 @@ impl PrivateCA {
         Self::create_device_cert(device_public_key, self, device_id, cert_config)
     }
 
+    /// Sign a device certificate using a full keypair (for testing with SoftwareProvider)
+    ///
+    /// This method is primarily for testing where the full keypair is available.
+    /// In production with hardware security modules, only the public key is extractable.
+    pub fn sign_device_certificate_with_keypair(
+        &self,
+        device_keypair: &KeyPair,
+        device_id: &DeviceIdentity,
+        cert_config: &CertificateConfig,
+    ) -> Result<Vec<u8>, WSError> {
+        // Validate device ID
+        device_id.validate()?;
+
+        // Create device certificate using the full keypair
+        Self::create_device_cert_with_keypair(device_keypair, self, device_id, cert_config)
+    }
+
     /// Create self-signed certificate (for Root CA)
     fn create_self_signed_cert(keypair: &KeyPair, config: &CAConfig) -> Result<Vec<u8>, WSError> {
         // Create rcgen certificate parameters
@@ -341,9 +358,82 @@ impl PrivateCA {
         Ok(der)
     }
 
+    /// Create device certificate with full keypair (for testing)
+    fn create_device_cert_with_keypair(
+        device_keypair: &KeyPair,
+        ca: &PrivateCA,
+        device_id: &DeviceIdentity,
+        config: &CertificateConfig,
+    ) -> Result<Vec<u8>, WSError> {
+        // Same as create_device_cert but uses the actual device keypair
+        let mut params = CertificateParams::default();
+
+        // Set subject distinguished name
+        let mut dn = DistinguishedName::new();
+        dn.push(DnType::CommonName, &device_id.to_common_name());
+        dn.push(DnType::OrganizationName, &config.organization);
+
+        if let Some(ou) = &config.organizational_unit {
+            dn.push(DnType::OrganizationalUnitName, ou);
+        }
+
+        params.distinguished_name = dn;
+
+        // Add device ID as Subject Alternative Name
+        let device_id_str = device_id.id().to_string();
+        let ia5_string = Ia5String::try_from(device_id_str.as_str())
+            .map_err(|_| WSError::InvalidArgument)?;
+        params.subject_alt_names = vec![
+            rcgen::SanType::DnsName(ia5_string),
+        ];
+
+        // Set validity period
+        let now = OffsetDateTime::now_utc();
+        params.not_before = now;
+        params.not_after = now + TimeDuration::days(config.validity_days as i64);
+
+        // End-entity certificate (not a CA)
+        params.is_ca = IsCa::NoCa;
+
+        // Key usage for code signing
+        params.key_usages = vec![
+            KeyUsagePurpose::DigitalSignature,
+        ];
+
+        // Extended key usage for code signing
+        params.extended_key_usages = vec![
+            ExtendedKeyUsagePurpose::CodeSigning,
+        ];
+
+        // Use the actual device keypair
+        let key_pair_pem = Self::ed25519_to_pem(device_keypair)?;
+        let rcgen_keypair = rcgen::KeyPair::from_pem(&key_pair_pem)
+            .map_err(|e| WSError::HardwareError(format!("Failed to create key pair: {}", e)))?;
+
+        // Parse issuer certificate and sign
+        let issuer_cert_der = CertificateDer::from(ca.certificate.clone());
+        let issuer_cert_params = CertificateParams::from_ca_cert_der(&issuer_cert_der)
+            .map_err(|e| WSError::X509Error(format!("Failed to parse CA certificate: {}", e)))?;
+
+        let issuer_key_pem = Self::ed25519_to_pem(&ca.keypair)?;
+        let issuer_keypair = rcgen::KeyPair::from_pem(&issuer_key_pem)
+            .map_err(|e| WSError::HardwareError(format!("Failed to create CA key pair: {}", e)))?;
+
+        let issuer_cert = issuer_cert_params.self_signed(&issuer_keypair)
+            .map_err(|e| WSError::HardwareError(format!("Failed to create CA cert: {}", e)))?;
+
+        // Sign certificate with CA
+        let der = params.signed_by(&rcgen_keypair, &issuer_cert, &issuer_keypair)
+            .map_err(|e| WSError::HardwareError(format!("Failed to sign device certificate: {}", e)))?
+            .der()
+            .to_vec();
+
+        Ok(der)
+    }
+
     /// Create device certificate
     fn create_device_cert(
-        _device_public_key: &PublicKey,
+        device_public_key: &PublicKey,
         ca: &PrivateCA,
         device_id: &DeviceIdentity,
         config: &CertificateConfig,
@@ -388,11 +478,17 @@ impl PrivateCA {
             ExtendedKeyUsagePurpose::CodeSigning,
         ];
 
-        // Create a temporary KeyPair from device public key
-        // Note: We need a KeyPair for rcgen, but we only have the public key
-        // For now, create a temporary keypair just for the certificate structure
-        // The actual signing will use the hardware key
-        let temp_keypair = KeyPair::generate();
+        // Create a KeyPair containing the device's public key
+        // Note: rcgen requires a KeyPair for certificate generation, but we only have the public key.
+        // We generate a temporary valid keypair and replace its public key with the device's.
+        // The temporary private key is never used for actual signing - the CA signs the certificate.
+        let temp_full_keypair = KeyPair::generate();
+        let temp_keypair = KeyPair {
+            sk: temp_full_keypair.sk,
+            pk: device_public_key.clone(),
+        };
+
+        // Convert to PEM for rcgen
         let key_pair_pem = Self::ed25519_to_pem(&temp_keypair)?;
         let rcgen_keypair = rcgen::KeyPair::from_pem(&key_pair_pem)
             .map_err(|e| WSError::HardwareError(format!("Failed to create key pair: {}", e)))?;

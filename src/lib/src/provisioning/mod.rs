@@ -71,12 +71,14 @@ pub mod csr;
 pub mod device;
 pub mod session;
 pub mod verification;
+pub mod wasm_signing;
 
 pub use ca::PrivateCA;
 pub use csr::CertificateSigningRequest;
 pub use device::DeviceIdentity;
 pub use session::ProvisioningSession;
-pub use verification::OfflineVerifier;
+pub use verification::{OfflineVerifier, OfflineVerifierBuilder};
+pub use wasm_signing::{sign_with_certificate, verify_with_certificate};
 
 /// Configuration for certificate generation
 #[derive(Debug, Clone)]

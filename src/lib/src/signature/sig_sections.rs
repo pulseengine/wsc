@@ -18,6 +18,10 @@ pub struct SignatureForHashes {
     pub key_id: Option<Vec<u8>>,
     pub alg_id: u8,
     pub signature: Vec<u8>,
+    /// Certificate chain for certificate-based signing
+    /// Format: [device_cert_der, intermediate_cert_der, ...]
+    /// Device certificate comes first, root certificate last (optional)
+    pub certificate_chain: Option<Vec<Vec<u8>>>,
 }
 
 #[derive(PartialEq, Debug, Clone, Eq)]
@@ -44,6 +48,17 @@ impl SignatureForHashes {
         }
         writer.write_all(&[self.alg_id])?;
         varint::put_slice(&mut writer, &self.signature)?;
+
+        // Serialize certificate chain (optional, for backward compatibility)
+        if let Some(cert_chain) = &self.certificate_chain {
+            varint::put(&mut writer, cert_chain.len() as _)?;
+            for cert in cert_chain {
+                varint::put_slice(&mut writer, cert)?;
+            }
+        } else {
+            varint::put(&mut writer, 0)?; // No certificate chain
+        }
+
         Ok(writer.into_inner().unwrap())
     }
 
@@ -63,10 +78,29 @@ impl SignatureForHashes {
             return Err(WSError::ParseError);
         }
         let signature = varint::get_slice(&mut reader)?;
+
+        // Deserialize certificate chain (optional, for backward compatibility)
+        let certificate_chain = if let Ok(cert_count) = varint::get32(&mut reader) {
+            if cert_count > 0 {
+                let mut certs = Vec::with_capacity(cert_count as usize);
+                for _ in 0..cert_count {
+                    if let Ok(cert) = varint::get_slice(&mut reader) {
+                        certs.push(cert);
+                    }
+                }
+                Some(certs)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             key_id,
             alg_id,
             signature,
+            certificate_chain,
         })
     }
 }
@@ -189,6 +223,7 @@ mod tests {
             key_id: None,
             alg_id: ED25519_PK_ID,
             signature: vec![1, 2, 3, 4],
+            certificate_chain: None,
         };
         let serialized = sig.serialize().unwrap();
         assert!(!serialized.is_empty());
@@ -202,6 +237,7 @@ mod tests {
             key_id: Some(vec![10, 20, 30]),
             alg_id: ED25519_PK_ID,
             signature: vec![1, 2, 3, 4],
+            certificate_chain: None,
         };
         let serialized = sig.serialize().unwrap();
         assert!(!serialized.is_empty());
@@ -213,6 +249,7 @@ mod tests {
             key_id: Some(vec![5, 6, 7]),
             alg_id: ED25519_PK_ID,
             signature: vec![11, 22, 33, 44],
+            certificate_chain: None,
         };
         let serialized = original.serialize().unwrap();
         let deserialized = SignatureForHashes::deserialize(&serialized).unwrap();
@@ -225,6 +262,7 @@ mod tests {
             key_id: None,
             alg_id: ED25519_PK_ID,
             signature: vec![100, 101, 102],
+            certificate_chain: None,
         };
         let serialized = original.serialize().unwrap();
         let deserialized = SignatureForHashes::deserialize(&serialized).unwrap();
@@ -241,6 +279,7 @@ mod tests {
                 key_id: None,
                 alg_id: ED25519_PK_ID,
                 signature: vec![9, 8, 7],
+                certificate_chain: None,
             }],
         };
         let serialized = signed.serialize().unwrap();
@@ -255,6 +294,7 @@ mod tests {
                 key_id: Some(vec![1, 2]),
                 alg_id: ED25519_PK_ID,
                 signature: vec![3, 4, 5],
+                certificate_chain: None,
             }],
         };
         let serialized = original.serialize().unwrap();
@@ -316,6 +356,7 @@ mod tests {
                     key_id: None,
                     alg_id: ED25519_PK_ID,
                     signature: vec![1, 2, 3],
+                    certificate_chain: None,
                 }],
             }],
         };
@@ -343,6 +384,7 @@ mod tests {
                         key_id: Some(vec![10, 11]),
                         alg_id: ED25519_PK_ID,
                         signature: vec![20, 21, 22],
+                        certificate_chain: None,
                     }],
                 },
                 SignedHashes {

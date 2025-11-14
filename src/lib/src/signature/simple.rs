@@ -40,6 +40,7 @@ impl SecretKey {
             key_id: key_id.cloned(),
             alg_id: ED25519_PK_ID,
             signature,
+            certificate_chain: None, // No certificates for simple signing
         };
         let signed_hashes_set = vec![SignedHashes {
             hashes: vec![h],
