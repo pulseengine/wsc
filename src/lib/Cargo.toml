@@ -61,6 +61,8 @@ allocation-guard = []
 software-keys = []
 # Hardware security backends (embedded/production)
 tpm2 = []  # TPM 2.0 support - will add tpm2-tss dependency
-secure-element = []  # Secure elements (ATECC608, SE050) - will add platform drivers
+secure-element = []  # Generic secure element support
+atecc608 = ["secure-element"]  # Microchip ATECC608 (I2C)
+se050 = ["secure-element"]  # NXP SE050 EdgeLock (I2C/SPI)
 trustzone = []  # ARM TrustZone / OP-TEE support
 sgx = []  # Intel SGX support

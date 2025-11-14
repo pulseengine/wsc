@@ -356,9 +356,12 @@ pub fn detect_platform() -> Result<Box<dyn SecureKeyProvider>, WSError> {
 
     #[cfg(feature = "secure-element")]
     {
-        if let Ok(provider) = secure_element::SecureElementProvider::new() {
-            log::info!("Detected secure element hardware");
-            return Ok(Box::new(provider));
+        // Try common I2C bus paths
+        for bus_path in &["/dev/i2c-1", "/dev/i2c-0", "/dev/i2c-2"] {
+            if let Ok(provider) = secure_element::SecureElementProvider::auto_detect(bus_path) {
+                log::info!("Detected secure element hardware on {}", bus_path);
+                return Ok(Box::new(provider));
+            }
         }
     }
 
@@ -404,11 +407,15 @@ pub fn list_available_providers() -> Vec<(String, Box<dyn SecureKeyProvider>)> {
 
     #[cfg(feature = "secure-element")]
     {
-        if let Ok(provider) = secure_element::SecureElementProvider::new() {
-            providers.push((
-                "Secure Element".to_string(),
-                Box::new(provider) as Box<dyn SecureKeyProvider>,
-            ));
+        // Try common I2C bus paths
+        for bus_path in &["/dev/i2c-1", "/dev/i2c-0", "/dev/i2c-2"] {
+            if let Ok(provider) = secure_element::SecureElementProvider::auto_detect(bus_path) {
+                providers.push((
+                    format!("Secure Element ({})", bus_path),
+                    Box::new(provider) as Box<dyn SecureKeyProvider>,
+                ));
+                break; // Only add first detected
+            }
         }
     }
 
