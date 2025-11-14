@@ -112,6 +112,7 @@ impl SecretKey {
             key_id: key_id.cloned(),
             alg_id: ED25519_PK_ID,
             signature,
+            certificate_chain: None,
         };
         let mut signed_hashes_set = match &previous_signature_data {
             None => vec![],
