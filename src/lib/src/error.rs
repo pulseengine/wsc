@@ -84,6 +84,22 @@ pub enum WSError {
 
     #[error("X509 error: {0}")]
     X509Error(String),
+
+    // Hardware security errors
+    #[error("Hardware error: {0}")]
+    HardwareError(String),
+
+    #[error("Key not found: {0}")]
+    KeyNotFound(String),
+
+    #[error("Access denied: {0}")]
+    AccessDenied(String),
+
+    #[error("Invalid key handle")]
+    InvalidKeyHandle,
+
+    #[error("No space available in hardware key storage")]
+    NoSpace,
 }
 
 // X509 error conversion

@@ -12,6 +12,12 @@ mod signature;
 mod split;
 mod wasm_module;
 
+/// Platform-specific hardware security integration
+///
+/// Provides unified interface for hardware-backed cryptographic operations
+/// across TPM 2.0, Secure Elements, TrustZone, and software fallback.
+pub mod platform;
+
 #[allow(unused_imports)]
 pub use error::*;
 #[allow(unused_imports)]

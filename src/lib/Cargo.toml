@@ -22,6 +22,8 @@ sha2 = "0.10"
 regex = "1.12.2"
 ssh-keys = "0.1.4"
 thiserror = "2.0.17"
+# Security: zeroize sensitive data on drop
+zeroize = { version = "1.8", features = ["derive"] }
 # WASI HTTP support - only used on wasm32-wasip2 via cfg guards
 wasi = "0.14.7"
 
@@ -52,6 +54,13 @@ const-oid = { version = "0.9", default-features = false, features = ["db"] }
 wat = "1.221"
 
 [features]
-default = []
+default = ["software-keys"]
 # Enable allocation tracking and phase-locked allocator for verifying allocation-free code paths
 allocation-guard = []
+# Software-based key storage (always available, for development/testing)
+software-keys = []
+# Hardware security backends (embedded/production)
+tpm2 = []  # TPM 2.0 support - will add tpm2-tss dependency
+secure-element = []  # Secure elements (ATECC608, SE050) - will add platform drivers
+trustzone = []  # ARM TrustZone / OP-TEE support
+sgx = []  # Intel SGX support
