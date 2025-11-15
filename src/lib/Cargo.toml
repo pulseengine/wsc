@@ -36,6 +36,7 @@ x509-parser = "0.16"
 time = "0.3"
 chrono = "0.4"
 hex = "0.4"
+uuid = { version = "1.11", features = ["v4"] }
 # ureq is only used on native (cfg-guarded), but must be unconditional for Bazel
 ureq = "3.1.2"
 # SPKI encoding for public keys
