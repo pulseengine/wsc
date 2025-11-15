@@ -33,6 +33,22 @@ jobs:
       if: matrix.build-system == 'cargo'
       run: cargo test --verbose
 
+    - name: Build Examples
+      if: matrix.build-system == 'cargo'
+      run: |
+        echo "Building Wasmtime integration example"
+        cd examples/wasmtime-loader
+        cargo build --release --verbose
+
+    - name: Test Wasmtime Example
+      if: matrix.build-system == 'cargo'
+      run: |
+        echo "Testing Wasmtime integration example"
+        cd examples/wasmtime-loader
+
+        # Test: Verify binary runs and shows help
+        cargo run --release -- --help
+
     # Bazel setup and builds
     - name: Setup Bazel
       if: matrix.build-system == 'bazel'

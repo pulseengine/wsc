@@ -23,14 +23,21 @@
   ;; Instantiate the core module
   (core instance $hello_inst (instantiate $hello))
 
-  ;; Canonical ABI adapter functions
+  ;; Canonical ABI adapter to lift core function to component function
   (func $get-msg (result string)
     (canon lift (core func $hello_inst "get-message") (memory $hello_inst "memory") string-encoding=utf8)
   )
 
-  ;; Call host print with our message
-  (start (func
-    (let (local $msg string) (call $get-msg))
+  ;; Adapter to call host print
+  (func $print-msg
+    (param $msg string)
     (call $host "print" (local.get $msg))
-  ))
+  )
+
+  ;; Component start function: get message and print it
+  (func $main
+    (call $print-msg (call $get-msg))
+  )
+
+  (start $main)
 )
