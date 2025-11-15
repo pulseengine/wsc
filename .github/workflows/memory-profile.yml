@@ -81,7 +81,55 @@ jobs:
           $HOME/bytehound --help 2>&1 || true
           echo ""
 
-          # Process each profile file
+          # Try to extract metrics via ByteHound's web server API
+          profile=$(ls memory-profiling_*.dat | head -1)
+          if [ -n "$profile" ]; then
+            echo "Starting ByteHound server for: $profile"
+
+            # Start ByteHound server in background on port 8080
+            $HOME/bytehound server "$profile" --port 8080 &
+            BYTEHOUND_PID=$!
+
+            # Wait for server to start (max 10 seconds)
+            echo "Waiting for ByteHound server to start..."
+            for i in {1..20}; do
+              if curl -s http://localhost:8080 >/dev/null 2>&1; then
+                echo "Server is up!"
+                break
+              fi
+              sleep 0.5
+            done
+
+            # Try to discover API endpoints
+            echo ""
+            echo "Exploring ByteHound API..."
+
+            # Common API endpoints to try
+            for endpoint in / /api /api/data /api/stats /api/allocations /data /stats; do
+              echo "Trying: http://localhost:8080$endpoint"
+              response=$(curl -s -w "\nHTTP_CODE:%{http_code}" "http://localhost:8080$endpoint" 2>&1 | head -20)
+              http_code=$(echo "$response" | grep "HTTP_CODE:" | cut -d: -f2)
+
+              if [ "$http_code" = "200" ]; then
+                echo "  ✓ Found endpoint! Response preview:"
+                echo "$response" | grep -v "HTTP_CODE:" | head -10
+
+                # Save full response if it's JSON
+                if echo "$response" | grep -q -E '^\s*[\{\[]'; then
+                  echo "  (Looks like JSON, saving to ${profile}.api${endpoint//\//_}.json)"
+                  echo "$response" | grep -v "HTTP_CODE:" > "${profile}.api${endpoint//\//_}.json"
+                fi
+              else
+                echo "  ✗ HTTP $http_code"
+              fi
+            done
+
+            # Kill the server
+            kill $BYTEHOUND_PID 2>/dev/null || true
+            wait $BYTEHOUND_PID 2>/dev/null || true
+          fi
+
+          # Process each profile file for basic summary
           for profile in memory-profiling_*.dat; do
             echo ""
             echo "=== Analyzing: $profile ==="
@@ -89,9 +137,6 @@ jobs:
             # Get basic file info
             size=$(stat -c%s "$profile" 2>/dev/null || echo "unknown")
             echo "Profile size: $size bytes"
-
-            # Try to extract summary if ByteHound supports it
-            # Common commands: server, strip, etc.
 
             # Create a summary text file with basic info
             {
@@ -132,6 +177,18 @@ jobs:
             echo "- **$profile** - $size" >> $GITHUB_STEP_SUMMARY
           done
 
+          # Show discovered API endpoints if any
+          if ls memory-profiling_*.dat.api*.json 1> /dev/null 2>&1; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔌 Discovered API Endpoints" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            for api_file in memory-profiling_*.dat.api*.json; do
+              endpoint=$(basename "$api_file" | sed 's/.*\.api\(.*\)\.json/\1/' | tr '_' '/')
+              size=$(stat -c%s "$api_file" 2>/dev/null || echo "0")
+              echo "- \`$endpoint\` - $size bytes" >> $GITHUB_STEP_SUMMARY
+            done
+          fi
+
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🔍 How to Analyze" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -163,6 +220,8 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: bytehound-summaries
-        path: memory-profiling_*.dat.summary.txt
+        path: |
+          memory-profiling_*.dat.summary.txt
+          memory-profiling_*.dat.api*.json
         retention-days: 7
         if-no-files-found: ignore
