@@ -71,6 +71,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use crate::wasm_module::{Module, Section, CustomSection, SectionLike};
 use crate::error::WSError;
+use x509_parser::prelude::FromDer;
 
 /// Build provenance for a WASM component
 ///
@@ -796,6 +797,123 @@ impl Default for SourceAllowList {
     }
 }
 
+/// Timestamp validation policy
+///
+/// Validates timestamps in provenance data to prevent:
+/// - Time-based attacks (using old vulnerable versions)
+/// - Timestamp manipulation to hide malicious activity
+/// - Future-dated timestamps (clock skew attacks)
+#[derive(Debug, Clone)]
+pub struct TimestampPolicy {
+    /// Maximum age for timestamps (in seconds from now)
+    /// Signatures/compositions older than this are rejected
+    max_age_seconds: Option<i64>,
+
+    /// Maximum future tolerance (in seconds from now)
+    /// Allows for clock skew between systems
+    future_tolerance_seconds: i64,
+
+    /// Require all timestamps to be present
+    require_timestamps: bool,
+}
+
+impl TimestampPolicy {
+    /// Create a new timestamp policy with default settings
+    /// - No maximum age limit
+    /// - 5 minutes future tolerance (for clock skew)
+    /// - Timestamps required
+    pub fn new() -> Self {
+        Self {
+            max_age_seconds: None,
+            future_tolerance_seconds: 300, // 5 minutes
+            require_timestamps: true,
+        }
+    }
+
+    /// Set maximum age for timestamps
+    /// Compositions/builds older than this are rejected
+    pub fn with_max_age_seconds(mut self, seconds: i64) -> Self {
+        self.max_age_seconds = Some(seconds);
+        self
+    }
+
+    /// Set maximum age in days
+    pub fn with_max_age_days(mut self, days: i64) -> Self {
+        self.max_age_seconds = Some(days * 86400);
+        self
+    }
+
+    /// Set future tolerance for clock skew
+    pub fn with_future_tolerance_seconds(mut self, seconds: i64) -> Self {
+        self.future_tolerance_seconds = seconds;
+        self
+    }
+
+    /// Set whether timestamps are required
+    pub fn require_timestamps(mut self, require: bool) -> Self {
+        self.require_timestamps = require;
+        self
+    }
+
+    /// Validate a timestamp string (ISO 8601 format)
+    /// Returns Ok(()) if valid, Err(String) with reason if invalid
+    pub fn validate_timestamp(&self, timestamp: &str, context: &str) -> Result<(), String> {
+        // Parse the timestamp
+        let parsed = chrono::DateTime::parse_from_rfc3339(timestamp)
+            .map_err(|e| format!("Invalid timestamp format for {}: {}", context, e))?;
+
+        let now = chrono::Utc::now();
+        let timestamp_utc = parsed.with_timezone(&chrono::Utc);
+
+        // Check if timestamp is too far in the future
+        let future_limit = now + chrono::Duration::seconds(self.future_tolerance_seconds);
+        if timestamp_utc > future_limit {
+            return Err(format!(
+                "{} timestamp is too far in the future (more than {} seconds ahead)",
+                context, self.future_tolerance_seconds
+            ));
+        }
+
+        // Check if timestamp is too old
+        if let Some(max_age) = self.max_age_seconds {
+            let age_limit = now - chrono::Duration::seconds(max_age);
+            if timestamp_utc < age_limit {
+                let age_days = max_age / 86400;
+                return Err(format!(
+                    "{} timestamp is too old (older than {} days)",
+                    context, age_days
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate an optional timestamp
+    pub fn validate_optional_timestamp(
+        &self,
+        timestamp: Option<&str>,
+        context: &str,
+    ) -> Result<(), String> {
+        match timestamp {
+            Some(ts) => self.validate_timestamp(ts, context),
+            None => {
+                if self.require_timestamps {
+                    Err(format!("{} timestamp is required but missing", context))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
+}
+
+impl Default for TimestampPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Validation mode configuration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationMode {
@@ -814,6 +932,8 @@ pub struct ValidationConfig {
     pub version_policy: Option<VersionPolicy>,
     /// Source allow-list (optional)
     pub source_allow_list: Option<SourceAllowList>,
+    /// Timestamp validation policy (optional)
+    pub timestamp_policy: Option<TimestampPolicy>,
     /// Enable transitive dependency validation
     pub validate_transitive: bool,
 }
@@ -825,6 +945,7 @@ impl ValidationConfig {
             mode: ValidationMode::Lenient,
             version_policy: None,
             source_allow_list: None,
+            timestamp_policy: None,
             validate_transitive: false,
         }
     }
@@ -835,6 +956,7 @@ impl ValidationConfig {
             mode: ValidationMode::Strict,
             version_policy: None,
             source_allow_list: None,
+            timestamp_policy: None,
             validate_transitive: false,
         }
     }
@@ -848,6 +970,12 @@ impl ValidationConfig {
     /// Set source allow-list
     pub fn with_source_allow_list(mut self, allow_list: SourceAllowList) -> Self {
         self.source_allow_list = Some(allow_list);
+        self
+    }
+
+    /// Set timestamp validation policy
+    pub fn with_timestamp_policy(mut self, policy: TimestampPolicy) -> Self {
+        self.timestamp_policy = Some(policy);
         self
     }
 
@@ -1467,6 +1595,341 @@ pub fn extract_all_provenance(
     let sbom = extract_sbom(module)?;
     let attestation = extract_intoto_attestation(module)?;
     Ok((manifest, provenance, sbom, attestation))
+}
+
+// ============================================================================
+// Timestamp Validation Functions
+// ============================================================================
+
+/// Validate timestamps in a composition manifest
+pub fn validate_manifest_timestamps(
+    manifest: &CompositionManifest,
+    policy: &TimestampPolicy,
+) -> Result<(), String> {
+    // Validate composition timestamp
+    policy.validate_timestamp(&manifest.timestamp, "Composition")?;
+
+    // Validate integrator timestamp if present
+    if let Some(integrator) = &manifest.integrator {
+        policy.validate_timestamp(&integrator.verification_timestamp, "Integrator verification")?;
+    }
+
+    Ok(())
+}
+
+/// Validate timestamps in build provenance
+pub fn validate_provenance_timestamps(
+    provenance: &BuildProvenance,
+    policy: &TimestampPolicy,
+) -> Result<(), String> {
+    policy.validate_timestamp(&provenance.build_timestamp, "Build")?;
+    Ok(())
+}
+
+/// Validate timestamps in an in-toto attestation
+pub fn validate_attestation_timestamps(
+    attestation: &InTotoAttestation,
+    policy: &TimestampPolicy,
+) -> Result<(), String> {
+    // Validate metadata timestamps
+    if let Some(finished_on_value) = attestation.predicate.metadata.get("finishedOn") {
+        if let Some(finished_on) = finished_on_value.as_str() {
+            policy.validate_timestamp(finished_on, "Build completion")?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate all timestamps in a WASM module's provenance data
+pub fn validate_all_timestamps(
+    module: &Module,
+    policy: &TimestampPolicy,
+) -> Result<ValidationResult, WSError> {
+    let mut warnings = Vec::new();
+    let mut errors = Vec::new();
+
+    // Extract all provenance data
+    let (manifest, provenance, _sbom, attestation) = extract_all_provenance(module)?;
+
+    // Validate manifest timestamps
+    if let Some(ref m) = manifest {
+        if let Err(e) = validate_manifest_timestamps(m, policy) {
+            errors.push(e);
+        }
+    } else if policy.require_timestamps {
+        warnings.push("No composition manifest found for timestamp validation".to_string());
+    }
+
+    // Validate build provenance timestamps
+    if let Some(ref p) = provenance {
+        if let Err(e) = validate_provenance_timestamps(p, policy) {
+            errors.push(e);
+        }
+    }
+
+    // Validate attestation timestamps
+    if let Some(ref a) = attestation {
+        if let Err(e) = validate_attestation_timestamps(a, policy) {
+            errors.push(e);
+        }
+    }
+
+    Ok(ValidationResult {
+        valid: errors.is_empty(),
+        errors,
+        warnings,
+    })
+}
+
+/// Signature freshness validator
+///
+/// Validates that signatures were created within an acceptable time window
+#[derive(Debug, Clone)]
+pub struct SignatureFreshnessPolicy {
+    /// Maximum age for signatures (in seconds)
+    max_signature_age_seconds: Option<i64>,
+
+    /// Minimum acceptable signature timestamp (absolute time)
+    /// Useful for enforcing "no signatures before this date" policies
+    minimum_timestamp: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl SignatureFreshnessPolicy {
+    /// Create a new signature freshness policy with no restrictions
+    pub fn new() -> Self {
+        Self {
+            max_signature_age_seconds: None,
+            minimum_timestamp: None,
+        }
+    }
+
+    /// Set maximum signature age in seconds
+    pub fn with_max_age_seconds(mut self, seconds: i64) -> Self {
+        self.max_signature_age_seconds = Some(seconds);
+        self
+    }
+
+    /// Set maximum signature age in days
+    pub fn with_max_age_days(mut self, days: i64) -> Self {
+        self.max_signature_age_seconds = Some(days * 86400);
+        self
+    }
+
+    /// Set minimum acceptable timestamp
+    /// Signatures created before this time are rejected
+    pub fn with_minimum_timestamp(mut self, timestamp: chrono::DateTime<chrono::Utc>) -> Self {
+        self.minimum_timestamp = Some(timestamp);
+        self
+    }
+
+    /// Validate a signature timestamp
+    pub fn validate(&self, timestamp: &str, context: &str) -> Result<(), String> {
+        let parsed = chrono::DateTime::parse_from_rfc3339(timestamp)
+            .map_err(|e| format!("Invalid timestamp format for {}: {}", context, e))?;
+
+        let timestamp_utc = parsed.with_timezone(&chrono::Utc);
+        let now = chrono::Utc::now();
+
+        // Check maximum age
+        if let Some(max_age) = self.max_signature_age_seconds {
+            let age = now.signed_duration_since(timestamp_utc);
+            if age.num_seconds() > max_age {
+                let age_days = max_age / 86400;
+                return Err(format!(
+                    "{} signature is too old (created {} days ago, max age: {} days)",
+                    context,
+                    age.num_days(),
+                    age_days
+                ));
+            }
+        }
+
+        // Check minimum timestamp
+        if let Some(min_ts) = &self.minimum_timestamp {
+            if timestamp_utc < *min_ts {
+                return Err(format!(
+                    "{} signature was created before minimum acceptable time ({})",
+                    context,
+                    min_ts.to_rfc3339()
+                ));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for SignatureFreshnessPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================================================
+// Certificate Expiration Validation
+// ============================================================================
+
+/// Certificate validity policy
+///
+/// Validates X.509 certificates to ensure they are:
+/// - Not expired
+/// - Not used before their validity start date
+/// - Have sufficient remaining validity
+#[derive(Debug, Clone)]
+pub struct CertificateValidityPolicy {
+    /// Require minimum remaining validity (in seconds)
+    /// Certificates expiring within this window are rejected
+    min_remaining_validity_seconds: Option<i64>,
+
+    /// Allow certificates not yet valid (for testing)
+    allow_not_yet_valid: bool,
+}
+
+impl CertificateValidityPolicy {
+    /// Create a new certificate validity policy with default settings
+    /// - No minimum remaining validity requirement
+    /// - Do not allow certificates not yet valid
+    pub fn new() -> Self {
+        Self {
+            min_remaining_validity_seconds: None,
+            allow_not_yet_valid: false,
+        }
+    }
+
+    /// Set minimum remaining validity in seconds
+    /// Certificates expiring within this time window are rejected
+    pub fn with_min_remaining_validity_seconds(mut self, seconds: i64) -> Self {
+        self.min_remaining_validity_seconds = Some(seconds);
+        self
+    }
+
+    /// Set minimum remaining validity in days
+    pub fn with_min_remaining_validity_days(mut self, days: i64) -> Self {
+        self.min_remaining_validity_seconds = Some(days * 86400);
+        self
+    }
+
+    /// Allow certificates that are not yet valid
+    /// Useful for testing with future-dated certificates
+    pub fn allow_not_yet_valid(mut self, allow: bool) -> Self {
+        self.allow_not_yet_valid = allow;
+        self
+    }
+
+    /// Validate certificate validity period using parsed not_before/not_after
+    ///
+    /// # Arguments
+    /// * `not_before` - Certificate validity start time (ISO 8601)
+    /// * `not_after` - Certificate validity end time (ISO 8601)
+    /// * `context` - Description of the certificate for error messages
+    pub fn validate_certificate_times(
+        &self,
+        not_before: &str,
+        not_after: &str,
+        context: &str,
+    ) -> Result<(), String> {
+        let now = chrono::Utc::now();
+
+        // Parse timestamps
+        let not_before_time = chrono::DateTime::parse_from_rfc3339(not_before)
+            .map_err(|e| format!("Invalid not_before timestamp for {}: {}", context, e))?
+            .with_timezone(&chrono::Utc);
+
+        let not_after_time = chrono::DateTime::parse_from_rfc3339(not_after)
+            .map_err(|e| format!("Invalid not_after timestamp for {}: {}", context, e))?
+            .with_timezone(&chrono::Utc);
+
+        // Check if certificate is not yet valid
+        if now < not_before_time {
+            if !self.allow_not_yet_valid {
+                return Err(format!(
+                    "{} certificate is not yet valid (valid from: {})",
+                    context,
+                    not_before_time.to_rfc3339()
+                ));
+            }
+        }
+
+        // Check if certificate is expired
+        if now > not_after_time {
+            return Err(format!(
+                "{} certificate has expired (expired on: {})",
+                context,
+                not_after_time.to_rfc3339()
+            ));
+        }
+
+        // Check minimum remaining validity
+        if let Some(min_remaining) = self.min_remaining_validity_seconds {
+            let remaining = not_after_time.signed_duration_since(now);
+            if remaining.num_seconds() < min_remaining {
+                let remaining_days = remaining.num_days();
+                let min_days = min_remaining / 86400;
+                return Err(format!(
+                    "{} certificate expires too soon (remaining: {} days, minimum required: {} days)",
+                    context, remaining_days, min_days
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate a certificate in DER format
+    ///
+    /// This function parses a DER-encoded X.509 certificate and validates
+    /// its validity period.
+    pub fn validate_certificate_der(
+        &self,
+        cert_der: &[u8],
+        context: &str,
+    ) -> Result<(), String> {
+        // Parse the certificate using x509_parser
+        let (_, cert) = x509_parser::certificate::X509Certificate::from_der(cert_der)
+            .map_err(|e| format!("Failed to parse {} certificate: {:?}", context, e))?;
+
+        // Get validity period
+        let not_before = cert.validity().not_before;
+        let not_after = cert.validity().not_after;
+
+        // Convert to chrono DateTime for easier comparison
+        let not_before_chrono = chrono::DateTime::<chrono::Utc>::from_timestamp(
+            not_before.timestamp(),
+            0,
+        ).ok_or_else(|| format!("Invalid not_before timestamp for {}", context))?;
+
+        let not_after_chrono = chrono::DateTime::<chrono::Utc>::from_timestamp(
+            not_after.timestamp(),
+            0,
+        ).ok_or_else(|| format!("Invalid not_after timestamp for {}", context))?;
+
+        // Validate using our policy
+        self.validate_certificate_times(
+            &not_before_chrono.to_rfc3339(),
+            &not_after_chrono.to_rfc3339(),
+            context,
+        )
+    }
+
+    /// Validate a certificate in PEM format
+    pub fn validate_certificate_pem(
+        &self,
+        cert_pem: &str,
+        context: &str,
+    ) -> Result<(), String> {
+        // Parse PEM to get DER
+        let pem = pem::parse(cert_pem)
+            .map_err(|e| format!("Failed to parse {} PEM certificate: {}", context, e))?;
+
+        self.validate_certificate_der(&pem.contents(), context)
+    }
+}
+
+impl Default for CertificateValidityPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -2529,5 +2992,312 @@ mod tests {
         assert!(policy.validate_version("lib-a", "0.9.0").is_err());
         assert!(policy.validate_version("lib-b", "2.5.1").is_err());
         assert!(policy.validate_version("lib-c", "2.1.0").is_err());
+    }
+
+    // ========================================================================
+    // Phase 4: Timestamp Validation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_timestamp_policy_valid() {
+        let policy = TimestampPolicy::new();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        assert!(policy.validate_timestamp(&now, "Test").is_ok());
+    }
+
+    #[test]
+    fn test_timestamp_policy_future_within_tolerance() {
+        let policy = TimestampPolicy::new()
+            .with_future_tolerance_seconds(300); // 5 minutes
+
+        // 2 minutes in the future (within tolerance)
+        let future = (chrono::Utc::now() + chrono::Duration::seconds(120)).to_rfc3339();
+        assert!(policy.validate_timestamp(&future, "Test").is_ok());
+    }
+
+    #[test]
+    fn test_timestamp_policy_future_exceeds_tolerance() {
+        let policy = TimestampPolicy::new()
+            .with_future_tolerance_seconds(300); // 5 minutes
+
+        // 10 minutes in the future (exceeds tolerance)
+        let future = (chrono::Utc::now() + chrono::Duration::seconds(600)).to_rfc3339();
+        let result = policy.validate_timestamp(&future, "Test");
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("too far in the future"));
+    }
+
+    #[test]
+    fn test_timestamp_policy_max_age() {
+        let policy = TimestampPolicy::new()
+            .with_max_age_days(30); // 30 days
+
+        // 10 days ago (within limit)
+        let recent = (chrono::Utc::now() - chrono::Duration::days(10)).to_rfc3339();
+        assert!(policy.validate_timestamp(&recent, "Test").is_ok());
+
+        // 40 days ago (exceeds limit)
+        let old = (chrono::Utc::now() - chrono::Duration::days(40)).to_rfc3339();
+        let result = policy.validate_timestamp(&old, "Test");
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("too old"));
+    }
+
+    #[test]
+    fn test_timestamp_policy_optional_missing_required() {
+        let policy = TimestampPolicy::new().require_timestamps(true);
+
+        let result = policy.validate_optional_timestamp(None, "Test");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("required but missing"));
+    }
+
+    #[test]
+    fn test_timestamp_policy_optional_missing_allowed() {
+        let policy = TimestampPolicy::new().require_timestamps(false);
+
+        assert!(policy.validate_optional_timestamp(None, "Test").is_ok());
+    }
+
+    #[test]
+    fn test_timestamp_policy_optional_present() {
+        let policy = TimestampPolicy::new();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        assert!(policy.validate_optional_timestamp(Some(&now), "Test").is_ok());
+    }
+
+    #[test]
+    fn test_timestamp_policy_invalid_format() {
+        let policy = TimestampPolicy::new();
+
+        let result = policy.validate_timestamp("not-a-timestamp", "Test");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid timestamp format"));
+    }
+
+    #[test]
+    fn test_validate_manifest_timestamps() {
+        let policy = TimestampPolicy::new();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let manifest = CompositionManifest {
+            version: "1.0".to_string(),
+            tool: "wac".to_string(),
+            tool_version: "0.5.0".to_string(),
+            timestamp: now.clone(),
+            components: vec![],
+            integrator: Some(IntegratorInfo {
+                identity: "test@example.com".to_string(),
+                signature_index: 0,
+                verification_timestamp: now,
+            }),
+            metadata: HashMap::new(),
+        };
+
+        assert!(validate_manifest_timestamps(&manifest, &policy).is_ok());
+    }
+
+    #[test]
+    fn test_validate_manifest_timestamps_old() {
+        let policy = TimestampPolicy::new()
+            .with_max_age_days(1);
+
+        let old_time = (chrono::Utc::now() - chrono::Duration::days(10)).to_rfc3339();
+
+        let manifest = CompositionManifest {
+            version: "1.0".to_string(),
+            tool: "wac".to_string(),
+            tool_version: "0.5.0".to_string(),
+            timestamp: old_time,
+            components: vec![],
+            integrator: None,
+            metadata: HashMap::new(),
+        };
+
+        let result = validate_manifest_timestamps(&manifest, &policy);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("too old"));
+    }
+
+    #[test]
+    fn test_validate_provenance_timestamps() {
+        let policy = TimestampPolicy::new();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let provenance = BuildProvenance {
+            name: "test-component".to_string(),
+            version: "1.0.0".to_string(),
+            source_repo: None,
+            commit_sha: None,
+            build_tool: "cargo".to_string(),
+            build_tool_version: "1.75.0".to_string(),
+            builder: None,
+            build_timestamp: now,
+            metadata: HashMap::new(),
+        };
+
+        assert!(validate_provenance_timestamps(&provenance, &policy).is_ok());
+    }
+
+    // ========================================================================
+    // Phase 4: Signature Freshness Tests
+    // ========================================================================
+
+    #[test]
+    fn test_signature_freshness_no_restrictions() {
+        let policy = SignatureFreshnessPolicy::new();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        assert!(policy.validate(&now, "Signature").is_ok());
+    }
+
+    #[test]
+    fn test_signature_freshness_max_age() {
+        let policy = SignatureFreshnessPolicy::new()
+            .with_max_age_days(30);
+
+        // 10 days old (OK)
+        let recent = (chrono::Utc::now() - chrono::Duration::days(10)).to_rfc3339();
+        assert!(policy.validate(&recent, "Signature").is_ok());
+
+        // 40 days old (too old)
+        let old = (chrono::Utc::now() - chrono::Duration::days(40)).to_rfc3339();
+        let result = policy.validate(&old, "Signature");
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("too old"));
+    }
+
+    #[test]
+    fn test_signature_freshness_minimum_timestamp() {
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(7);
+        let policy = SignatureFreshnessPolicy::new()
+            .with_minimum_timestamp(cutoff);
+
+        // 3 days ago (after cutoff, OK)
+        let recent = (chrono::Utc::now() - chrono::Duration::days(3)).to_rfc3339();
+        assert!(policy.validate(&recent, "Signature").is_ok());
+
+        // 10 days ago (before cutoff, fail)
+        let old = (chrono::Utc::now() - chrono::Duration::days(10)).to_rfc3339();
+        let result = policy.validate(&old, "Signature");
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("before minimum acceptable time"));
+    }
+
+    #[test]
+    fn test_signature_freshness_combined_policies() {
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(60);
+        let policy = SignatureFreshnessPolicy::new()
+            .with_max_age_days(30)
+            .with_minimum_timestamp(cutoff);
+
+        // 15 days ago (within max age and after cutoff, OK)
+        let valid = (chrono::Utc::now() - chrono::Duration::days(15)).to_rfc3339();
+        assert!(policy.validate(&valid, "Signature").is_ok());
+
+        // 45 days ago (exceeds max age but after cutoff, fail)
+        let too_old = (chrono::Utc::now() - chrono::Duration::days(45)).to_rfc3339();
+        assert!(policy.validate(&too_old, "Signature").is_err());
+
+        // 90 days ago (before cutoff, fail)
+        let before_cutoff = (chrono::Utc::now() - chrono::Duration::days(90)).to_rfc3339();
+        assert!(policy.validate(&before_cutoff, "Signature").is_err());
+    }
+
+    // ========================================================================
+    // Phase 4: Certificate Validity Tests
+    // ========================================================================
+
+    #[test]
+    fn test_certificate_validity_policy_valid() {
+        let policy = CertificateValidityPolicy::new();
+
+        let not_before = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+        let not_after = (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339();
+
+        assert!(policy.validate_certificate_times(&not_before, &not_after, "Test").is_ok());
+    }
+
+    #[test]
+    fn test_certificate_validity_policy_expired() {
+        let policy = CertificateValidityPolicy::new();
+
+        let not_before = (chrono::Utc::now() - chrono::Duration::days(60)).to_rfc3339();
+        let not_after = (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339();
+
+        let result = policy.validate_certificate_times(&not_before, &not_after, "Test");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("expired"));
+    }
+
+    #[test]
+    fn test_certificate_validity_policy_not_yet_valid() {
+        let policy = CertificateValidityPolicy::new();
+
+        let not_before = (chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339();
+        let not_after = (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339();
+
+        let result = policy.validate_certificate_times(&not_before, &not_after, "Test");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not yet valid"));
+    }
+
+    #[test]
+    fn test_certificate_validity_policy_not_yet_valid_allowed() {
+        let policy = CertificateValidityPolicy::new()
+            .allow_not_yet_valid(true);
+
+        let not_before = (chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339();
+        let not_after = (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339();
+
+        assert!(policy.validate_certificate_times(&not_before, &not_after, "Test").is_ok());
+    }
+
+    #[test]
+    fn test_certificate_validity_policy_min_remaining() {
+        let policy = CertificateValidityPolicy::new()
+            .with_min_remaining_validity_days(10);
+
+        // 20 days remaining (OK)
+        let not_before = (chrono::Utc::now() - chrono::Duration::days(10)).to_rfc3339();
+        let not_after = (chrono::Utc::now() + chrono::Duration::days(20)).to_rfc3339();
+        assert!(policy.validate_certificate_times(&not_before, &not_after, "Test").is_ok());
+
+        // 5 days remaining (too soon)
+        let not_before2 = (chrono::Utc::now() - chrono::Duration::days(10)).to_rfc3339();
+        let not_after2 = (chrono::Utc::now() + chrono::Duration::days(5)).to_rfc3339();
+        let result = policy.validate_certificate_times(&not_before2, &not_after2, "Test");
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("expires too soon"));
+    }
+
+    #[test]
+    fn test_timestamp_validation_config_integration() {
+        let policy = TimestampPolicy::new()
+            .with_max_age_days(30);
+
+        let config = ValidationConfig::lenient()
+            .with_timestamp_policy(policy);
+
+        assert!(config.timestamp_policy.is_some());
+    }
+
+    #[test]
+    fn test_timestamp_validation_strict_mode() {
+        let policy = TimestampPolicy::new()
+            .with_max_age_days(7);
+
+        let config = ValidationConfig::strict()
+            .with_timestamp_policy(policy);
+
+        assert_eq!(config.mode, ValidationMode::Strict);
+        assert!(config.timestamp_policy.is_some());
     }
 }

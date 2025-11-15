@@ -297,7 +297,19 @@ Executive overview connecting research to action
 6. ✅ Comprehensive validation framework
 7. ✅ Write 18 new tests (38 total composition tests)
 
-### Week 5+ (Phases 3-5)
+### Week 5-6 (Phase 3) - ✅ COMPLETE!
+1. ✅ Version policy enforcement
+2. ✅ Source URL allow-lists
+3. ✅ Strict validation mode
+4. ✅ 58 composition tests passing
+
+### Week 7-8 (Phase 4) - ✅ COMPLETE!
+1. ✅ Timestamp validation with configurable tolerance
+2. ✅ Certificate expiration checking
+3. ✅ Signature freshness validation
+4. ✅ 80 composition tests passing (58 + 22 new tests)
+
+### Week 9+ (Phase 5)
 1. SLSA compliance documentation
 2. Hardware attestation integration
 3. Optional: Sigstore integration
@@ -333,13 +345,36 @@ Executive overview connecting research to action
 - [x] SLSA Level 2 compliance achieved ✅
 - [x] Zero security regressions ✅
 
+### Phase 3: ✅ COMPLETE!
+- [x] Version policy implementation (exact, min, max, range) ✅
+- [x] Semantic version comparison ✅
+- [x] Source URL allow-list validation ✅
+- [x] Strict validation mode (warnings → errors) ✅
+- [x] 58 composition tests passing (38+20, exceeded target!) ✅
+- [x] THREAT-04 (Version Rollback) fully mitigated ✅
+- [x] THREAT-02 (Dependency Confusion) enhanced ✅
+- [x] Zero security regressions ✅
+
+### Phase 4: ✅ COMPLETE!
+- [x] Timestamp validation with configurable tolerance ✅
+- [x] Maximum age policy (reject old timestamps) ✅
+- [x] Future tolerance (clock skew protection) ✅
+- [x] Certificate expiration checking (X.509) ✅
+- [x] Minimum remaining validity enforcement ✅
+- [x] Signature freshness validation ✅
+- [x] 80 composition tests passing (58+22, exceeded target!) ✅
+- [x] THREAT-07 (Timestamp Manipulation) fully mitigated ✅
+- [x] 22 new comprehensive tests ✅
+- [x] Zero security regressions ✅
+
 ### Project Status:
 - [x] Phase 1 complete ✅
 - [x] Phase 2 complete ✅
-- [x] 78+ tests passing (38 composition + 40 provisioning) ✅
+- [x] Phase 3 complete ✅
+- [x] Phase 4 complete ✅
+- [x] 120+ tests passing (80 composition + 40 provisioning) ✅
 - [x] SLSA Level 2 achieved ✅
-- [ ] Phase 3: Version policy & transitive dependencies
-- [ ] Phase 4: Timestamp validation & certificate expiration
+- [x] 5 out of 8 threats fully mitigated ✅
 - [ ] Phase 5: Hardware attestation & transparency log
 - [ ] SLSA Level 4 documented
 - [ ] Could be ecosystem standard
