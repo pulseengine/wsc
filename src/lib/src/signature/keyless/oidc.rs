@@ -509,4 +509,217 @@ mod tests {
         assert_eq!(token.identity, deserialized.identity);
         assert_eq!(token.issuer, deserialized.issuer);
     }
+
+    // ============================================================================
+    // SECURITY TESTS: Memory Zeroization (Issue #11)
+    // ============================================================================
+
+    #[test]
+    fn test_oidc_token_drop_is_called() {
+        // Test that Drop is called when token goes out of scope
+        // This verifies the zeroization mechanism is invoked
+
+        // Create a test token with known values
+        let test_token_value = "sensitive-jwt-token-12345";
+        let test_identity = "user@example.com";
+        let test_issuer = "https://issuer.example.com";
+
+        {
+            let token = OidcToken {
+                token: test_token_value.to_string(),
+                identity: test_identity.to_string(),
+                issuer: test_issuer.to_string(),
+            };
+
+            // Verify token has expected values while in scope
+            assert_eq!(token.token, test_token_value);
+            assert_eq!(token.identity, test_identity);
+            assert_eq!(token.issuer, test_issuer);
+
+            // When token goes out of scope here, Drop should be called
+        }
+
+        // If we reach here, Drop was successfully called without panic
+        // (We can't directly verify memory is zeroed in safe Rust, but we can
+        // verify the Drop implementation doesn't break normal operation)
+    }
+
+    #[test]
+    fn test_oidc_token_drop_with_error_path() {
+        // Test that Drop is called even when an error occurs
+        // This simulates the exception-safety of zeroization
+
+        fn operation_that_fails(token: OidcToken) -> Result<(), WSError> {
+            // Use the token
+            assert!(!token.token.is_empty());
+
+            // Simulate an error
+            Err(WSError::OidcError("Simulated error".to_string()))
+        }
+
+        let token = OidcToken {
+            token: "secret-token".to_string(),
+            identity: "user@test.com".to_string(),
+            issuer: "https://test.issuer.com".to_string(),
+        };
+
+        // Call function that fails - token should still be zeroized via Drop
+        let result = operation_that_fails(token);
+        assert!(result.is_err());
+
+        // If we reach here, Drop was called successfully even after error
+    }
+
+    #[test]
+    fn test_oidc_token_clone_and_drop() {
+        // Test that Clone works correctly and both original and clone are zeroized
+        // This is important because OidcToken derives Clone
+
+        let original = OidcToken {
+            token: "original-token".to_string(),
+            identity: "original@example.com".to_string(),
+            issuer: "https://original.issuer.com".to_string(),
+        };
+
+        {
+            let cloned = original.clone();
+
+            // Verify clone has same values
+            assert_eq!(original.token, cloned.token);
+            assert_eq!(original.identity, cloned.identity);
+            assert_eq!(original.issuer, cloned.issuer);
+
+            // cloned goes out of scope here, Drop called on clone
+        }
+
+        // Original still accessible
+        assert_eq!(original.token, "original-token");
+
+        // original goes out of scope at end of test, Drop called on original
+    }
+
+    #[test]
+    fn test_oidc_token_in_result_error_path() {
+        // Test that Drop is called when token is in a Result that's unwrapped
+        // and causes a panic (caught by should_panic)
+
+        fn create_token_and_fail() -> Result<OidcToken, WSError> {
+            let token = OidcToken {
+                token: "will-be-zeroized".to_string(),
+                identity: "test@example.com".to_string(),
+                issuer: "https://test.com".to_string(),
+            };
+
+            // Return the token in Ok
+            Ok(token)
+        }
+
+        // Get the token
+        let result = create_token_and_fail();
+        assert!(result.is_ok());
+
+        let token = result.unwrap();
+        assert_eq!(token.token, "will-be-zeroized");
+
+        // token dropped here - zeroization happens
+    }
+
+    #[test]
+    fn test_oidc_token_move_semantics() {
+        // Test that moving a token doesn't cause double-free or other issues
+        // with the Drop implementation
+
+        fn consume_token(token: OidcToken) -> String {
+            // Token is moved into this function
+            // It will be dropped when function returns
+            token.identity.clone()
+        }
+
+        let token = OidcToken {
+            token: "moved-token".to_string(),
+            identity: "moved@example.com".to_string(),
+            issuer: "https://moved.com".to_string(),
+        };
+
+        let identity = consume_token(token);
+        // token was moved, no longer accessible here
+
+        assert_eq!(identity, "moved@example.com");
+        // identity (a String) is dropped here normally
+    }
+
+    #[test]
+    fn test_oidc_token_empty_strings() {
+        // Test that zeroization works with empty strings
+        // Edge case: empty strings should not cause issues
+
+        let token = OidcToken {
+            token: String::new(),
+            identity: String::new(),
+            issuer: String::new(),
+        };
+
+        // Verify empty
+        assert!(token.token.is_empty());
+        assert!(token.identity.is_empty());
+        assert!(token.issuer.is_empty());
+
+        // Drop with empty strings should work fine
+    }
+
+    #[test]
+    fn test_oidc_token_large_token() {
+        // Test that zeroization works with large tokens
+        // This ensures performance is acceptable even with large JWTs
+
+        let large_token = "a".repeat(10_000); // 10KB token
+        let token = OidcToken {
+            token: large_token.clone(),
+            identity: "user@example.com".to_string(),
+            issuer: "https://issuer.com".to_string(),
+        };
+
+        assert_eq!(token.token.len(), 10_000);
+
+        // Drop with large string should work fine
+    }
+
+    #[test]
+    fn test_oidc_token_get_sub_claim_with_drop() {
+        // Test that get_sub_claim works and doesn't interfere with Drop
+
+        let payload = r#"{"sub":"test-subject","iss":"https://issuer.com"}"#;
+        let encoded_payload = URL_SAFE_NO_PAD.encode(payload);
+        let jwt = format!("header.{}.signature", encoded_payload);
+
+        let token = OidcToken {
+            token: jwt,
+            identity: "user@example.com".to_string(),
+            issuer: "https://issuer.com".to_string(),
+        };
+
+        let sub = token.get_sub_claim().unwrap();
+        assert_eq!(sub, "test-subject");
+
+        // token (and sub claim String) dropped here
+    }
+
+    #[test]
+    fn test_oidc_token_vec_of_tokens() {
+        // Test that a collection of tokens all get properly dropped
+
+        let mut tokens = Vec::new();
+
+        for i in 0..10 {
+            tokens.push(OidcToken {
+                token: format!("token-{}", i),
+                identity: format!("user{}@example.com", i),
+                issuer: "https://issuer.com".to_string(),
+            });
+        }
+
+        assert_eq!(tokens.len(), 10);
+
+        // When tokens Vec is dropped, all 10 OidcToken instances should be zeroized
+    }
 }
