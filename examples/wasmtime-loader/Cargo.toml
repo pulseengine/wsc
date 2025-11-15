@@ -1,0 +1,15 @@
+[package]
+name = "wasmtime-loader"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wsc = { path = "../../src/lib" }
+wasmtime = "37.0"
+anyhow = "1.0"
+env_logger = "0.11"
+log = "0.4"
+
+[[bin]]
+name = "loader"
+path = "src/main.rs"
