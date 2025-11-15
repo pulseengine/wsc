@@ -15,6 +15,7 @@ use crate::{Module, WSError};
 use ecdsa::SigningKey;
 use p256::ecdsa::Signature;
 use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
 
 /// Configuration for keyless signing
 pub struct KeylessConfig {
@@ -138,6 +139,19 @@ impl KeylessSigner {
         log::info!("Starting keyless signing process");
 
         // Step 1: Generate ephemeral keypair
+        // SECURITY: Ephemeral key zeroization (addresses Issue #14)
+        //
+        // The SigningKey contains a SecretKey which implements ZeroizeOnDrop.
+        // When the signing_key variable goes out of scope at the end of this function,
+        // its Drop implementation will securely zeroize the private key bytes in memory.
+        // This protects against:
+        // - Memory dumps and crash files
+        // - Swap file exposure
+        // - Process memory inspection via debuggers
+        // - Cold boot attacks (DRAM remanence)
+        //
+        // The zeroization happens automatically even in panic/error scenarios because
+        // Rust's drop mechanism is exception-safe.
         log::debug!("Generating ephemeral ECDSA P-256 keypair");
         let signing_key = SigningKey::<p256::NistP256>::random(&mut p256::elliptic_curve::rand_core::OsRng);
         let verifying_key = signing_key.verifying_key();

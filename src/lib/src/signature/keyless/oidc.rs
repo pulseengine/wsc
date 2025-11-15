@@ -2,6 +2,7 @@ use crate::error::WSError;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::env;
+use zeroize::Zeroize;
 
 /// OIDC token for identity verification
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,6 +13,18 @@ pub struct OidcToken {
     pub identity: String,
     /// Issuer URL
     pub issuer: String,
+}
+
+// SECURITY: Implement Drop to zeroize sensitive token data (addresses Issue #11)
+impl Drop for OidcToken {
+    fn drop(&mut self) {
+        // Zeroize the JWT token string to prevent it from lingering in memory
+        // This protects against memory dumps, swap files, and debuggers
+        self.token.zeroize();
+        // Note: identity and issuer are not secret, but zeroizing for defense in depth
+        self.identity.zeroize();
+        self.issuer.zeroize();
+    }
 }
 
 impl OidcToken {
