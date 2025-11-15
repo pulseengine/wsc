@@ -69,6 +69,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use crate::wasm_module::{Module, Section, CustomSection, SectionLike};
+use crate::error::WSError;
 
 /// Build provenance for a WASM component
 ///
@@ -713,9 +715,191 @@ impl InTotoAttestation {
     }
 }
 
+// ============================================================================
+// WASM Module Embedding/Extraction
+// ============================================================================
+
+/// Embed a composition manifest in a WASM module as a custom section
+pub fn embed_composition_manifest(mut module: Module, manifest: &CompositionManifest) -> Result<Module, WSError> {
+    let json = manifest.to_json().map_err(|e| {
+        WSError::InternalError(format!("Failed to serialize composition manifest: {}", e))
+    })?;
+
+    let custom_section = CustomSection::new(
+        COMPOSITION_MANIFEST_SECTION.to_string(),
+        json.as_bytes().to_vec(),
+    );
+
+    module.sections.push(Section::Custom(custom_section));
+    Ok(module)
+}
+
+/// Extract a composition manifest from a WASM module
+pub fn extract_composition_manifest(module: &Module) -> Result<Option<CompositionManifest>, WSError> {
+    for section in &module.sections {
+        if let Section::Custom(custom) = section {
+            if custom.name() == COMPOSITION_MANIFEST_SECTION {
+                let json = std::str::from_utf8(custom.payload()).map_err(|e| {
+                    WSError::InternalError(format!("Invalid UTF-8 in composition manifest: {}", e))
+                })?;
+
+                let manifest = CompositionManifest::from_json(json).map_err(|e| {
+                    WSError::InternalError(format!("Failed to deserialize composition manifest: {}", e))
+                })?;
+
+                return Ok(Some(manifest));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Embed a build provenance in a WASM module as a custom section
+pub fn embed_build_provenance(mut module: Module, provenance: &BuildProvenance) -> Result<Module, WSError> {
+    let json = serde_json::to_string_pretty(provenance).map_err(|e| {
+        WSError::InternalError(format!("Failed to serialize build provenance: {}", e))
+    })?;
+
+    let custom_section = CustomSection::new(
+        BUILD_PROVENANCE_SECTION.to_string(),
+        json.as_bytes().to_vec(),
+    );
+
+    module.sections.push(Section::Custom(custom_section));
+    Ok(module)
+}
+
+/// Extract build provenance from a WASM module
+pub fn extract_build_provenance(module: &Module) -> Result<Option<BuildProvenance>, WSError> {
+    for section in &module.sections {
+        if let Section::Custom(custom) = section {
+            if custom.name() == BUILD_PROVENANCE_SECTION {
+                let json = std::str::from_utf8(custom.payload()).map_err(|e| {
+                    WSError::InternalError(format!("Invalid UTF-8 in build provenance: {}", e))
+                })?;
+
+                let provenance = serde_json::from_str(json).map_err(|e| {
+                    WSError::InternalError(format!("Failed to deserialize build provenance: {}", e))
+                })?;
+
+                return Ok(Some(provenance));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Embed an SBOM in a WASM module as a custom section
+pub fn embed_sbom(mut module: Module, sbom: &Sbom) -> Result<Module, WSError> {
+    let json = sbom.to_json().map_err(|e| {
+        WSError::InternalError(format!("Failed to serialize SBOM: {}", e))
+    })?;
+
+    let custom_section = CustomSection::new(
+        SBOM_SECTION.to_string(),
+        json.as_bytes().to_vec(),
+    );
+
+    module.sections.push(Section::Custom(custom_section));
+    Ok(module)
+}
+
+/// Extract an SBOM from a WASM module
+pub fn extract_sbom(module: &Module) -> Result<Option<Sbom>, WSError> {
+    for section in &module.sections {
+        if let Section::Custom(custom) = section {
+            if custom.name() == SBOM_SECTION {
+                let json = std::str::from_utf8(custom.payload()).map_err(|e| {
+                    WSError::InternalError(format!("Invalid UTF-8 in SBOM: {}", e))
+                })?;
+
+                let sbom = Sbom::from_json(json).map_err(|e| {
+                    WSError::InternalError(format!("Failed to deserialize SBOM: {}", e))
+                })?;
+
+                return Ok(Some(sbom));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Embed an in-toto attestation in a WASM module as a custom section
+pub fn embed_intoto_attestation(mut module: Module, attestation: &InTotoAttestation) -> Result<Module, WSError> {
+    let json = attestation.to_json().map_err(|e| {
+        WSError::InternalError(format!("Failed to serialize in-toto attestation: {}", e))
+    })?;
+
+    let custom_section = CustomSection::new(
+        INTOTO_ATTESTATION_SECTION.to_string(),
+        json.as_bytes().to_vec(),
+    );
+
+    module.sections.push(Section::Custom(custom_section));
+    Ok(module)
+}
+
+/// Extract an in-toto attestation from a WASM module
+pub fn extract_intoto_attestation(module: &Module) -> Result<Option<InTotoAttestation>, WSError> {
+    for section in &module.sections {
+        if let Section::Custom(custom) = section {
+            if custom.name() == INTOTO_ATTESTATION_SECTION {
+                let json = std::str::from_utf8(custom.payload()).map_err(|e| {
+                    WSError::InternalError(format!("Invalid UTF-8 in in-toto attestation: {}", e))
+                })?;
+
+                let attestation = InTotoAttestation::from_json(json).map_err(|e| {
+                    WSError::InternalError(format!("Failed to deserialize in-toto attestation: {}", e))
+                })?;
+
+                return Ok(Some(attestation));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Embed all provenance data in a WASM module
+///
+/// This is a convenience function that embeds all four types of provenance
+/// data in a single operation.
+pub fn embed_all_provenance(
+    module: Module,
+    manifest: &CompositionManifest,
+    provenance: &BuildProvenance,
+    sbom: &Sbom,
+    attestation: &InTotoAttestation,
+) -> Result<Module, WSError> {
+    let module = embed_composition_manifest(module, manifest)?;
+    let module = embed_build_provenance(module, provenance)?;
+    let module = embed_sbom(module, sbom)?;
+    let module = embed_intoto_attestation(module, attestation)?;
+    Ok(module)
+}
+
+/// Extract all provenance data from a WASM module
+///
+/// Returns a tuple of (manifest, provenance, sbom, attestation).
+/// Any component that is not found will be None.
+pub fn extract_all_provenance(
+    module: &Module,
+) -> Result<(
+    Option<CompositionManifest>,
+    Option<BuildProvenance>,
+    Option<Sbom>,
+    Option<InTotoAttestation>,
+), WSError> {
+    let manifest = extract_composition_manifest(module)?;
+    let provenance = extract_build_provenance(module)?;
+    let sbom = extract_sbom(module)?;
+    let attestation = extract_intoto_attestation(module)?;
+    Ok((manifest, provenance, sbom, attestation))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wasm_module::Module;
 
     #[test]
     fn test_provenance_builder() {
@@ -968,5 +1152,224 @@ mod tests {
             attestation.predicate.build_type,
             "https://wsc.dev/composition@v1"
         );
+    }
+
+    // Helper to create a minimal WASM module for testing
+    fn create_test_module() -> Module {
+        Module {
+            header: [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
+            sections: vec![],
+        }
+    }
+
+    #[test]
+    fn test_embed_extract_composition_manifest() {
+        let mut manifest = CompositionManifest::new("wac", "0.5.0");
+        manifest.add_component("comp-a", "hash-a");
+        manifest.add_component("comp-b", "hash-b");
+
+        let module = create_test_module();
+        let module_with_manifest = embed_composition_manifest(module, &manifest).unwrap();
+
+        // Verify custom section was added
+        assert_eq!(module_with_manifest.sections.len(), 1);
+
+        // Extract and verify
+        let extracted = extract_composition_manifest(&module_with_manifest).unwrap();
+        assert!(extracted.is_some());
+
+        let extracted_manifest = extracted.unwrap();
+        assert_eq!(extracted_manifest.tool, "wac");
+        assert_eq!(extracted_manifest.components.len(), 2);
+        assert_eq!(extracted_manifest.components[0].id, "comp-a");
+    }
+
+    #[test]
+    fn test_embed_extract_build_provenance() {
+        let provenance = ProvenanceBuilder::new()
+            .component_name("test-comp")
+            .version("1.0.0")
+            .source_repo("https://github.com/test/repo")
+            .commit_sha("abc123")
+            .build_tool("cargo", "1.75.0")
+            .build();
+
+        let module = create_test_module();
+        let module_with_prov = embed_build_provenance(module, &provenance).unwrap();
+
+        // Extract and verify
+        let extracted = extract_build_provenance(&module_with_prov).unwrap();
+        assert!(extracted.is_some());
+
+        let extracted_prov = extracted.unwrap();
+        assert_eq!(extracted_prov.name, "test-comp");
+        assert_eq!(extracted_prov.version, "1.0.0");
+        assert_eq!(extracted_prov.commit_sha, Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn test_embed_extract_sbom() {
+        let mut sbom = Sbom::new("app", "1.0.0");
+        sbom.add_component("comp-a", "1.0.0", "hash-a");
+        sbom.add_component_with_source("comp-b", "2.0.0", "hash-b", "https://github.com/test/b");
+
+        let module = create_test_module();
+        let module_with_sbom = embed_sbom(module, &sbom).unwrap();
+
+        // Extract and verify
+        let extracted = extract_sbom(&module_with_sbom).unwrap();
+        assert!(extracted.is_some());
+
+        let extracted_sbom = extracted.unwrap();
+        assert_eq!(extracted_sbom.components.len(), 2);
+        assert_eq!(extracted_sbom.components[0].name, "comp-a");
+        assert_eq!(extracted_sbom.components[1].name, "comp-b");
+    }
+
+    #[test]
+    fn test_embed_extract_intoto_attestation() {
+        let mut attestation = InTotoAttestation::new_composition(
+            "app.wasm",
+            "final-hash",
+            "integrator",
+        );
+        attestation.add_material("comp-a.wasm", "hash-a");
+        attestation.add_material("comp-b.wasm", "hash-b");
+
+        let module = create_test_module();
+        let module_with_att = embed_intoto_attestation(module, &attestation).unwrap();
+
+        // Extract and verify
+        let extracted = extract_intoto_attestation(&module_with_att).unwrap();
+        assert!(extracted.is_some());
+
+        let extracted_att = extracted.unwrap();
+        assert_eq!(extracted_att.subject.len(), 1);
+        assert_eq!(extracted_att.subject[0].name, "app.wasm");
+        assert_eq!(extracted_att.predicate.materials.len(), 2);
+    }
+
+    #[test]
+    fn test_embed_all_provenance() {
+        let manifest = CompositionManifest::new("wac", "0.5.0");
+        let provenance = ProvenanceBuilder::new()
+            .component_name("app")
+            .version("1.0.0")
+            .build();
+        let sbom = Sbom::new("app", "1.0.0");
+        let attestation = InTotoAttestation::new_composition("app.wasm", "hash", "builder");
+
+        let module = create_test_module();
+        let module_with_all = embed_all_provenance(
+            module,
+            &manifest,
+            &provenance,
+            &sbom,
+            &attestation,
+        ).unwrap();
+
+        // Should have 4 custom sections
+        assert_eq!(module_with_all.sections.len(), 4);
+
+        // Extract all and verify
+        let (m, p, s, a) = extract_all_provenance(&module_with_all).unwrap();
+        assert!(m.is_some());
+        assert!(p.is_some());
+        assert!(s.is_some());
+        assert!(a.is_some());
+    }
+
+    #[test]
+    fn test_extract_from_module_without_provenance() {
+        let module = create_test_module();
+
+        // Extracting from empty module should return None for all
+        let manifest = extract_composition_manifest(&module).unwrap();
+        assert!(manifest.is_none());
+
+        let provenance = extract_build_provenance(&module).unwrap();
+        assert!(provenance.is_none());
+
+        let sbom = extract_sbom(&module).unwrap();
+        assert!(sbom.is_none());
+
+        let attestation = extract_intoto_attestation(&module).unwrap();
+        assert!(attestation.is_none());
+    }
+
+    #[test]
+    fn test_roundtrip_serialization() {
+        // Create full provenance
+        let manifest = CompositionManifest::new("wac", "0.5.0");
+        let provenance = ProvenanceBuilder::new()
+            .component_name("app")
+            .version("1.0.0")
+            .build();
+        let sbom = Sbom::new("app", "1.0.0");
+        let attestation = InTotoAttestation::new_composition("app.wasm", "hash", "builder");
+
+        // Embed in module
+        let module = create_test_module();
+        let module_with_all = embed_all_provenance(
+            module,
+            &manifest,
+            &provenance,
+            &sbom,
+            &attestation,
+        ).unwrap();
+
+        // Serialize to bytes
+        let mut buffer = Vec::new();
+        module_with_all.serialize(&mut buffer).unwrap();
+
+        // Deserialize back
+        let mut reader = std::io::Cursor::new(buffer);
+        let deserialized_module = Module::deserialize(&mut reader).unwrap();
+
+        // Extract and verify
+        let (m, p, s, a) = extract_all_provenance(&deserialized_module).unwrap();
+        assert!(m.is_some());
+        assert!(p.is_some());
+        assert!(s.is_some());
+        assert!(a.is_some());
+
+        // Verify data integrity
+        assert_eq!(m.unwrap().tool, "wac");
+        assert_eq!(p.unwrap().name, "app");
+        assert_eq!(s.unwrap().bom_format, "CycloneDX");
+        assert_eq!(a.unwrap().predicate.builder.id, "builder");
+    }
+
+    #[test]
+    fn test_multiple_sections_preserved() {
+        // Start with a module that has existing custom sections
+        let mut module = create_test_module();
+        let existing_section = CustomSection::new("existing".to_string(), vec![1, 2, 3]);
+        module.sections.push(Section::Custom(existing_section));
+
+        // Add provenance
+        let manifest = CompositionManifest::new("wac", "0.5.0");
+        let module_with_prov = embed_composition_manifest(module, &manifest).unwrap();
+
+        // Should have both sections
+        assert_eq!(module_with_prov.sections.len(), 2);
+
+        // Verify both sections exist
+        let mut found_existing = false;
+        let mut found_manifest = false;
+
+        for section in &module_with_prov.sections {
+            if let Section::Custom(custom) = section {
+                if custom.name() == "existing" {
+                    found_existing = true;
+                }
+                if custom.name() == COMPOSITION_MANIFEST_SECTION {
+                    found_manifest = true;
+                }
+            }
+        }
+
+        assert!(found_existing, "Existing section was lost");
+        assert!(found_manifest, "Manifest section was not added");
     }
 }
