@@ -76,34 +76,38 @@ jobs:
         if ls memory-profiling_*.dat 1> /dev/null 2>&1; then
           echo "Extracting metrics from ByteHound profiles..."
 
+          # First, check what commands bytehound actually supports
+          echo "ByteHound CLI capabilities:"
+          $HOME/bytehound --help 2>&1 || true
+          echo ""
+
           # Process each profile file
           for profile in memory-profiling_*.dat; do
             echo ""
             echo "=== Analyzing: $profile ==="
 
-            # Extract basic metrics using bytehound CLI
-            # Note: These commands may vary based on ByteHound version
+            # Get basic file info
+            size=$(stat -c%s "$profile" 2>/dev/null || echo "unknown")
+            echo "Profile size: $size bytes"
 
-            # Try to get allocation statistics
-            $HOME/bytehound allocations "$profile" --count 10 2>/dev/null | tee "${profile}.allocations.txt" || echo "Could not extract allocation stats"
+            # Try to extract summary if ByteHound supports it
+            # Common commands: server, strip, etc.
 
-            # Try to get memory timeline/summary
-            $HOME/bytehound export "$profile" --format json --output "${profile}.json" 2>/dev/null || echo "Could not export to JSON"
+            # Create a summary text file with basic info
+            cat > "${profile}.summary.txt" <<EOF
+Profile: $profile
+Size: $size bytes
+Generated: $(date)
 
-            # If JSON export succeeded, extract key metrics
-            if [ -f "${profile}.json" ]; then
-              echo "Extracting metrics from JSON export..."
+To view detailed analysis:
+  bytehound server $profile
+  # Then open http://localhost:8080
 
-              # Use jq if available to parse metrics
-              if command -v jq &> /dev/null; then
-                echo "Peak memory usage:" $(jq -r '.peak_memory // "N/A"' "${profile}.json" 2>/dev/null || echo "N/A")
-                echo "Total allocations:" $(jq -r '.total_allocations // "N/A"' "${profile}.json" 2>/dev/null || echo "N/A")
-                echo "Total allocated:" $(jq -r '.total_allocated // "N/A"' "${profile}.json" 2>/dev/null || echo "N/A")
-              else
-                # Fallback: just show file size as rough metric
-                echo "Profile size: $(stat -f%z "$profile" 2>/dev/null || stat -c%s "$profile" 2>/dev/null || echo "unknown")"
-              fi
-            fi
+Note: Full interactive analysis requires downloading the .dat file
+and running ByteHound server locally.
+EOF
+
+            echo "Summary saved to ${profile}.summary.txt"
           done
         else
           echo "No profiling data files found"
@@ -119,28 +123,34 @@ jobs:
           echo "Memory profiling data has been collected." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # Include extracted metrics if available
-          if ls memory-profiling_*.dat.allocations.txt 1> /dev/null 2>&1; then
-            echo "### 📈 Top Allocations" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            head -20 memory-profiling_*.dat.allocations.txt | head -20 >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No allocation data available" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-          fi
-
           echo "### 📁 Profile Files" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          ls -lh memory-profiling_*.dat | awk '{print "- **" $9 "** - " $5}' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
 
-          echo "### 🔍 Detailed Analysis" >> $GITHUB_STEP_SUMMARY
+          # List each profile with size
+          for profile in memory-profiling_*.dat; do
+            size=$(stat -c%s "$profile" 2>/dev/null | numfmt --to=iec 2>/dev/null || stat -c%s "$profile" 2>/dev/null || echo "unknown")
+            echo "- **$profile** - $size" >> $GITHUB_STEP_SUMMARY
+          done
+
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Download the \`bytehound-profiles\` artifact and run:" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 How to Analyze" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. Download the \`bytehound-profiles\` artifact from this workflow run" >> $GITHUB_STEP_SUMMARY
+          echo "2. Install ByteHound locally:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo 'cargo install bytehound-cli' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "3. Start the ByteHound server:" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
           echo 'bytehound server memory-profiling_*.dat' >> $GITHUB_STEP_SUMMARY
-          echo '# Then open http://localhost:8080' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "4. Open http://localhost:8080 in your browser for interactive analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The web UI provides:" >> $GITHUB_STEP_SUMMARY
+          echo "- Timeline of memory allocations" >> $GITHUB_STEP_SUMMARY
+          echo "- Flame graphs of allocation call stacks" >> $GITHUB_STEP_SUMMARY
+          echo "- Live object analysis" >> $GITHUB_STEP_SUMMARY
+          echo "- Allocation size distributions" >> $GITHUB_STEP_SUMMARY
         else
           echo "## ⚠️ ByteHound Memory Profile" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -148,13 +158,11 @@ jobs:
           echo "This may indicate that ByteHound was not properly loaded or tests did not run." >> $GITHUB_STEP_SUMMARY
         fi
 
-    - name: Upload extraction results
+    - name: Upload summaries
       if: success() || failure()
       uses: actions/upload-artifact@v4
       with:
-        name: bytehound-analysis
-        path: |
-          memory-profiling_*.dat.allocations.txt
-          memory-profiling_*.dat.json
+        name: bytehound-summaries
+        path: memory-profiling_*.dat.summary.txt
         retention-days: 7
         if-no-files-found: ignore
