@@ -72,6 +72,7 @@ use std::collections::HashMap;
 use crate::wasm_module::{Module, Section, CustomSection, SectionLike};
 use crate::error::WSError;
 use x509_parser::prelude::FromDer;
+use base64::Engine;
 
 /// Build provenance for a WASM component
 ///
@@ -1932,6 +1933,339 @@ impl Default for CertificateValidityPolicy {
     }
 }
 
+// ============================================================================
+// Phase 5: Hardware Attestation & Device Identity
+// ============================================================================
+
+/// Device attestation for composition operations
+///
+/// Proves that a composition operation was performed on a specific device
+/// with hardware-backed security.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceAttestation {
+    /// Device identifier (hardware serial number, device ID)
+    pub device_id: String,
+
+    /// Attestation type (TPM, SGX, SecureElement, etc.)
+    pub attestation_type: String,
+
+    /// Hardware security chip model (e.g., "ATECC608", "TPM2.0")
+    pub hardware_model: String,
+
+    /// Attestation data (platform-specific, base64-encoded)
+    pub attestation_data: String,
+
+    /// Signature over attestation (base64-encoded)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attestation_signature: Option<String>,
+
+    /// Timestamp when attestation was created (ISO 8601)
+    pub timestamp: String,
+
+    /// Public key of the device signing key (base64-encoded)
+    pub device_public_key: String,
+
+    /// Additional metadata
+    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+    pub metadata: HashMap<String, String>,
+}
+
+impl DeviceAttestation {
+    /// Create a new device attestation
+    pub fn new(
+        device_id: impl Into<String>,
+        attestation_type: impl Into<String>,
+        hardware_model: impl Into<String>,
+    ) -> Self {
+        Self {
+            device_id: device_id.into(),
+            attestation_type: attestation_type.into(),
+            hardware_model: hardware_model.into(),
+            attestation_data: String::new(),
+            attestation_signature: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            device_public_key: String::new(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    /// Set attestation data (will be base64-encoded)
+    pub fn with_attestation_data(mut self, data: &[u8]) -> Self {
+        self.attestation_data = base64::engine::general_purpose::STANDARD.encode(data);
+        self
+    }
+
+    /// Set attestation signature (will be base64-encoded)
+    pub fn with_signature(mut self, signature: &[u8]) -> Self {
+        self.attestation_signature = Some(base64::engine::general_purpose::STANDARD.encode(signature));
+        self
+    }
+
+    /// Set device public key (will be base64-encoded)
+    pub fn with_public_key(mut self, public_key: &[u8]) -> Self {
+        self.device_public_key = base64::engine::general_purpose::STANDARD.encode(public_key);
+        self
+    }
+
+    /// Add metadata field
+    pub fn add_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.metadata.insert(key.into(), value.into());
+        self
+    }
+
+    /// Serialize to JSON
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+
+    /// Deserialize from JSON
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+}
+
+/// Hardware-backed composition manifest
+///
+/// Extends CompositionManifest with device attestation for SLSA Level 4
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HardwareCompositionManifest {
+    /// Base composition manifest
+    #[serde(flatten)]
+    pub manifest: CompositionManifest,
+
+    /// Device attestation (proves composition was done on specific hardware)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_attestation: Option<DeviceAttestation>,
+
+    /// Hardware security level (0-4, where 4 is highest)
+    pub security_level: u8,
+}
+
+impl HardwareCompositionManifest {
+    /// Create from base manifest
+    pub fn from_manifest(manifest: CompositionManifest) -> Self {
+        Self {
+            manifest,
+            device_attestation: None,
+            security_level: 0,
+        }
+    }
+
+    /// Add device attestation
+    pub fn with_device_attestation(mut self, attestation: DeviceAttestation) -> Self {
+        self.device_attestation = Some(attestation);
+        self
+    }
+
+    /// Set security level
+    pub fn with_security_level(mut self, level: u8) -> Self {
+        self.security_level = level.min(4); // Cap at level 4
+        self
+    }
+
+    /// Serialize to JSON
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+
+    /// Deserialize from JSON
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+}
+
+/// Transparency log entry
+///
+/// Records composition operations in an immutable transparency log (e.g., Rekor)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransparencyLogEntry {
+    /// Log index (unique identifier in log)
+    pub log_index: u64,
+
+    /// Log entry UUID
+    pub uuid: String,
+
+    /// Log entry body (base64-encoded)
+    pub body: String,
+
+    /// Integrated timestamp from transparency log
+    pub integrated_time: i64,
+
+    /// Log ID (identifies which transparency log)
+    pub log_id: String,
+
+    /// Inclusion proof (for verification)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inclusion_proof: Option<InclusionProof>,
+}
+
+/// Inclusion proof for transparency log
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InclusionProof {
+    /// Tree size when entry was added
+    pub tree_size: u64,
+
+    /// Root hash of the tree
+    pub root_hash: String,
+
+    /// Merkle proof hashes
+    pub hashes: Vec<String>,
+
+    /// Log index of this entry
+    pub log_index: u64,
+}
+
+impl TransparencyLogEntry {
+    /// Create a new transparency log entry
+    pub fn new(log_index: u64, uuid: impl Into<String>) -> Self {
+        Self {
+            log_index,
+            uuid: uuid.into(),
+            body: String::new(),
+            integrated_time: chrono::Utc::now().timestamp(),
+            log_id: String::new(),
+            inclusion_proof: None,
+        }
+    }
+
+    /// Set body data (will be base64-encoded)
+    pub fn with_body(mut self, body: &[u8]) -> Self {
+        self.body = base64::engine::general_purpose::STANDARD.encode(body);
+        self
+    }
+
+    /// Add inclusion proof
+    pub fn with_inclusion_proof(mut self, proof: InclusionProof) -> Self {
+        self.inclusion_proof = Some(proof);
+        self
+    }
+
+    /// Serialize to JSON
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+
+    /// Deserialize from JSON
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+}
+
+/// WASM custom section names for hardware attestation
+const DEVICE_ATTESTATION_SECTION: &str = "wsc.device_attestation";
+const TRANSPARENCY_LOG_SECTION: &str = "wsc.transparency_log";
+
+/// Embed device attestation in a WASM module as a custom section
+pub fn embed_device_attestation(
+    mut module: Module,
+    attestation: &DeviceAttestation,
+) -> Result<Module, WSError> {
+    let json = attestation.to_json().map_err(|e| {
+        WSError::InternalError(format!("Failed to serialize device attestation: {}", e))
+    })?;
+
+    let custom_section = CustomSection::new(
+        DEVICE_ATTESTATION_SECTION.to_string(),
+        json.as_bytes().to_vec(),
+    );
+
+    module.sections.push(Section::Custom(custom_section));
+    Ok(module)
+}
+
+/// Extract device attestation from a WASM module
+pub fn extract_device_attestation(module: &Module) -> Result<Option<DeviceAttestation>, WSError> {
+    for section in &module.sections {
+        if let Section::Custom(custom) = section {
+            if custom.name() == DEVICE_ATTESTATION_SECTION {
+                let json = std::str::from_utf8(custom.payload()).map_err(|e| {
+                    WSError::InternalError(format!("Invalid UTF-8 in device attestation: {}", e))
+                })?;
+
+                let attestation = DeviceAttestation::from_json(json).map_err(|e| {
+                    WSError::InternalError(format!("Failed to deserialize device attestation: {}", e))
+                })?;
+
+                return Ok(Some(attestation));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Embed transparency log entry in a WASM module as a custom section
+pub fn embed_transparency_log_entry(
+    mut module: Module,
+    entry: &TransparencyLogEntry,
+) -> Result<Module, WSError> {
+    let json = entry.to_json().map_err(|e| {
+        WSError::InternalError(format!("Failed to serialize transparency log entry: {}", e))
+    })?;
+
+    let custom_section = CustomSection::new(
+        TRANSPARENCY_LOG_SECTION.to_string(),
+        json.as_bytes().to_vec(),
+    );
+
+    module.sections.push(Section::Custom(custom_section));
+    Ok(module)
+}
+
+/// Extract transparency log entry from a WASM module
+pub fn extract_transparency_log_entry(module: &Module) -> Result<Option<TransparencyLogEntry>, WSError> {
+    for section in &module.sections {
+        if let Section::Custom(custom) = section {
+            if custom.name() == TRANSPARENCY_LOG_SECTION {
+                let json = std::str::from_utf8(custom.payload()).map_err(|e| {
+                    WSError::InternalError(format!("Invalid UTF-8 in transparency log entry: {}", e))
+                })?;
+
+                let entry = TransparencyLogEntry::from_json(json).map_err(|e| {
+                    WSError::InternalError(format!("Failed to deserialize transparency log entry: {}", e))
+                })?;
+
+                return Ok(Some(entry));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Validate device attestation
+pub fn validate_device_attestation(
+    attestation: &DeviceAttestation,
+    _expected_device_id: Option<&str>,
+) -> Result<(), String> {
+    // Check required fields are present
+    if attestation.device_id.is_empty() {
+        return Err("Device ID is required".to_string());
+    }
+
+    if attestation.device_public_key.is_empty() {
+        return Err("Device public key is required".to_string());
+    }
+
+    // Validate device ID matches expected (if provided)
+    if let Some(expected) = _expected_device_id {
+        if attestation.device_id != expected {
+            return Err(format!(
+                "Device ID mismatch: expected '{}', got '{}'",
+                expected, attestation.device_id
+            ));
+        }
+    }
+
+    // Validate timestamp format
+    if chrono::DateTime::parse_from_rfc3339(&attestation.timestamp).is_err() {
+        return Err(format!(
+            "Invalid timestamp format: {}",
+            attestation.timestamp
+        ));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3299,5 +3633,313 @@ mod tests {
 
         assert_eq!(config.mode, ValidationMode::Strict);
         assert!(config.timestamp_policy.is_some());
+    }
+
+    // ========================================================================
+    // Phase 5: Hardware Attestation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_device_attestation_creation() {
+        let attestation = DeviceAttestation::new(
+            "device-12345",
+            "SecureElement",
+            "ATECC608",
+        );
+
+        assert_eq!(attestation.device_id, "device-12345");
+        assert_eq!(attestation.attestation_type, "SecureElement");
+        assert_eq!(attestation.hardware_model, "ATECC608");
+        assert!(!attestation.timestamp.is_empty());
+    }
+
+    #[test]
+    fn test_device_attestation_with_data() {
+        let test_data = b"attestation_data_here";
+        let attestation = DeviceAttestation::new("device-1", "TPM", "TPM2.0")
+            .with_attestation_data(test_data);
+
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&attestation.attestation_data)
+            .unwrap();
+        assert_eq!(decoded, test_data);
+    }
+
+    #[test]
+    fn test_device_attestation_with_signature() {
+        let signature = b"signature_bytes";
+        let attestation = DeviceAttestation::new("device-1", "SGX", "SGX-Enabled")
+            .with_signature(signature);
+
+        assert!(attestation.attestation_signature.is_some());
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(attestation.attestation_signature.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(decoded, signature);
+    }
+
+    #[test]
+    fn test_device_attestation_with_public_key() {
+        let pubkey = b"public_key_bytes_here_32_bytes!";
+        let attestation = DeviceAttestation::new("device-1", "SecureElement", "ATECC608")
+            .with_public_key(pubkey);
+
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&attestation.device_public_key)
+            .unwrap();
+        assert_eq!(decoded, pubkey);
+    }
+
+    #[test]
+    fn test_device_attestation_with_metadata() {
+        let attestation = DeviceAttestation::new("device-1", "TrustZone", "ARMv8")
+            .add_metadata("firmware_version", "1.2.3")
+            .add_metadata("boot_time", "2025-11-15T10:00:00Z");
+
+        assert_eq!(attestation.metadata.get("firmware_version"), Some(&"1.2.3".to_string()));
+        assert_eq!(attestation.metadata.get("boot_time"), Some(&"2025-11-15T10:00:00Z".to_string()));
+    }
+
+    #[test]
+    fn test_device_attestation_serialization() {
+        let attestation = DeviceAttestation::new("device-1", "SecureElement", "ATECC608")
+            .with_attestation_data(b"test_data")
+            .with_public_key(b"public_key");
+
+        let json = attestation.to_json().unwrap();
+        let deserialized = DeviceAttestation::from_json(&json).unwrap();
+
+        assert_eq!(deserialized.device_id, attestation.device_id);
+        assert_eq!(deserialized.hardware_model, attestation.hardware_model);
+        assert_eq!(deserialized.attestation_data, attestation.attestation_data);
+    }
+
+    #[test]
+    fn test_hardware_composition_manifest() {
+        let base_manifest = CompositionManifest::new("wac", "0.5.0");
+        let hw_manifest = HardwareCompositionManifest::from_manifest(base_manifest)
+            .with_security_level(4);
+
+        assert_eq!(hw_manifest.security_level, 4);
+        assert!(hw_manifest.device_attestation.is_none());
+    }
+
+    #[test]
+    fn test_hardware_composition_manifest_with_attestation() {
+        let base_manifest = CompositionManifest::new("wac", "0.5.0");
+        let attestation = DeviceAttestation::new("device-1", "ATECC608", "SecureElement");
+
+        let hw_manifest = HardwareCompositionManifest::from_manifest(base_manifest)
+            .with_device_attestation(attestation)
+            .with_security_level(4);
+
+        assert!(hw_manifest.device_attestation.is_some());
+        assert_eq!(hw_manifest.security_level, 4);
+    }
+
+    #[test]
+    fn test_hardware_composition_manifest_security_level_cap() {
+        let base_manifest = CompositionManifest::new("wac", "0.5.0");
+        let hw_manifest = HardwareCompositionManifest::from_manifest(base_manifest)
+            .with_security_level(10); // Try to set level 10
+
+        assert_eq!(hw_manifest.security_level, 4); // Should cap at 4
+    }
+
+    #[test]
+    fn test_transparency_log_entry_creation() {
+        let entry = TransparencyLogEntry::new(12345, "uuid-abcd-1234");
+
+        assert_eq!(entry.log_index, 12345);
+        assert_eq!(entry.uuid, "uuid-abcd-1234");
+        assert!(entry.body.is_empty());
+        assert!(entry.inclusion_proof.is_none());
+    }
+
+    #[test]
+    fn test_transparency_log_entry_with_body() {
+        let body_data = b"log_entry_body_data";
+        let entry = TransparencyLogEntry::new(100, "uuid-test")
+            .with_body(body_data);
+
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&entry.body)
+            .unwrap();
+        assert_eq!(decoded, body_data);
+    }
+
+    #[test]
+    fn test_transparency_log_entry_with_proof() {
+        let proof = InclusionProof {
+            tree_size: 1000,
+            root_hash: "abcd1234".to_string(),
+            hashes: vec!["hash1".to_string(), "hash2".to_string()],
+            log_index: 100,
+        };
+
+        let entry = TransparencyLogEntry::new(100, "uuid-test")
+            .with_inclusion_proof(proof.clone());
+
+        assert!(entry.inclusion_proof.is_some());
+        let included_proof = entry.inclusion_proof.unwrap();
+        assert_eq!(included_proof.tree_size, 1000);
+        assert_eq!(included_proof.log_index, 100);
+        assert_eq!(included_proof.hashes.len(), 2);
+    }
+
+    #[test]
+    fn test_transparency_log_entry_serialization() {
+        let entry = TransparencyLogEntry::new(123, "uuid-456")
+            .with_body(b"test_body");
+
+        let json = entry.to_json().unwrap();
+        let deserialized = TransparencyLogEntry::from_json(&json).unwrap();
+
+        assert_eq!(deserialized.log_index, entry.log_index);
+        assert_eq!(deserialized.uuid, entry.uuid);
+        assert_eq!(deserialized.body, entry.body);
+    }
+
+    #[test]
+    fn test_embed_and_extract_device_attestation() {
+        let module = Module::default();
+        let attestation = DeviceAttestation::new("device-test", "ATECC608", "SecureElement")
+            .with_attestation_data(b"test_data");
+
+        let module_with_attestation = embed_device_attestation(module, &attestation).unwrap();
+        let extracted = extract_device_attestation(&module_with_attestation).unwrap();
+
+        assert!(extracted.is_some());
+        let extracted_attestation = extracted.unwrap();
+        assert_eq!(extracted_attestation.device_id, "device-test");
+        assert_eq!(extracted_attestation.hardware_model, "SecureElement");
+    }
+
+    #[test]
+    fn test_extract_device_attestation_none() {
+        let module = Module::default();
+        let extracted = extract_device_attestation(&module).unwrap();
+
+        assert!(extracted.is_none());
+    }
+
+    #[test]
+    fn test_embed_and_extract_transparency_log() {
+        let module = Module::default();
+        let entry = TransparencyLogEntry::new(999, "uuid-transparency")
+            .with_body(b"log_data");
+
+        let module_with_log = embed_transparency_log_entry(module, &entry).unwrap();
+        let extracted = extract_transparency_log_entry(&module_with_log).unwrap();
+
+        assert!(extracted.is_some());
+        let extracted_entry = extracted.unwrap();
+        assert_eq!(extracted_entry.log_index, 999);
+        assert_eq!(extracted_entry.uuid, "uuid-transparency");
+    }
+
+    #[test]
+    fn test_extract_transparency_log_none() {
+        let module = Module::default();
+        let extracted = extract_transparency_log_entry(&module).unwrap();
+
+        assert!(extracted.is_none());
+    }
+
+    #[test]
+    fn test_validate_device_attestation_valid() {
+        let attestation = DeviceAttestation::new("device-1", "ATECC608", "SecureElement")
+            .with_public_key(b"pubkey");
+
+        let result = validate_device_attestation(&attestation, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_device_attestation_missing_device_id() {
+        let mut attestation = DeviceAttestation::new("device-1", "ATECC608", "SecureElement");
+        attestation.device_id = String::new();
+        attestation.device_public_key = "key".to_string();
+
+        let result = validate_device_attestation(&attestation, None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Device ID is required"));
+    }
+
+    #[test]
+    fn test_validate_device_attestation_missing_public_key() {
+        let attestation = DeviceAttestation::new("device-1", "ATECC608", "SecureElement");
+        // device_public_key is empty by default until with_public_key is called
+
+        let result = validate_device_attestation(&attestation, None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("public key is required"));
+    }
+
+    #[test]
+    fn test_validate_device_attestation_device_id_mismatch() {
+        let attestation = DeviceAttestation::new("device-1", "ATECC608", "SecureElement")
+            .with_public_key(b"key");
+
+        let result = validate_device_attestation(&attestation, Some("device-2"));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Device ID mismatch"));
+    }
+
+    #[test]
+    fn test_validate_device_attestation_device_id_match() {
+        let attestation = DeviceAttestation::new("device-1", "ATECC608", "SecureElement")
+            .with_public_key(b"key");
+
+        let result = validate_device_attestation(&attestation, Some("device-1"));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_multiple_provenance_types_embedded() {
+        let module = Module::default();
+
+        // Add composition manifest
+        let manifest = CompositionManifest::new("wac", "0.5.0");
+        let module = embed_composition_manifest(module, &manifest).unwrap();
+
+        // Add device attestation
+        let attestation = DeviceAttestation::new("device-1", "ATECC608", "SecureElement")
+            .with_public_key(b"key");
+        let module = embed_device_attestation(module, &attestation).unwrap();
+
+        // Add transparency log
+        let log_entry = TransparencyLogEntry::new(100, "uuid-test");
+        let module = embed_transparency_log_entry(module, &log_entry).unwrap();
+
+        // Extract all
+        let extracted_manifest = extract_composition_manifest(&module).unwrap();
+        let extracted_attestation = extract_device_attestation(&module).unwrap();
+        let extracted_log = extract_transparency_log_entry(&module).unwrap();
+
+        assert!(extracted_manifest.is_some());
+        assert!(extracted_attestation.is_some());
+        assert!(extracted_log.is_some());
+    }
+
+    #[test]
+    fn test_hardware_composition_manifest_serialization() {
+        let base_manifest = CompositionManifest::new("wac", "0.5.0");
+        let attestation = DeviceAttestation::new("device-1", "ATECC608", "SecureElement")
+            .with_public_key(b"test_key");
+
+        let hw_manifest = HardwareCompositionManifest::from_manifest(base_manifest)
+            .with_device_attestation(attestation)
+            .with_security_level(4);
+
+        let json = hw_manifest.to_json().unwrap();
+        let deserialized = HardwareCompositionManifest::from_json(&json).unwrap();
+
+        assert_eq!(deserialized.security_level, 4);
+        assert!(deserialized.device_attestation.is_some());
+        assert_eq!(
+            deserialized.device_attestation.as_ref().unwrap().device_id,
+            "device-1"
+        );
     }
 }
