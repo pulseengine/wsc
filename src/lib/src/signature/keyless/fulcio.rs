@@ -173,7 +173,11 @@ impl FulcioClient {
         // Split base64 into 64-character lines (standard PEM format)
         let mut pem = String::from("-----BEGIN PUBLIC KEY-----\n");
         for chunk in b64.as_bytes().chunks(64) {
-            pem.push_str(std::str::from_utf8(chunk).unwrap());
+            // SAFETY: base64 encoding always produces valid UTF-8 (only uses ASCII chars A-Z, a-z, 0-9, +, /, =)
+            // However, to avoid unwrap (Issue #13), we handle the error case properly
+            let chunk_str = std::str::from_utf8(chunk)
+                .map_err(|e| WSError::FulcioError(format!("Invalid base64 encoding (not UTF-8): {}", e)))?;
+            pem.push_str(chunk_str);
             pem.push('\n');
         }
         pem.push_str("-----END PUBLIC KEY-----");
