@@ -591,11 +591,12 @@ impl RekorKeyring {
         // This ensures we're using the correct key and prevents key confusion attacks
         let computed_fingerprint = Self::compute_key_fingerprint(verifying_key)?;
         if checkpoint.signature.key_fingerprint != computed_fingerprint {
+            // SECURITY (Issue #9): Don't expose full fingerprints in error messages
+            // Only show first 2 bytes to aid debugging without leaking full key IDs
             return Err(WSError::RekorError(format!(
-                "Checkpoint key fingerprint mismatch: expected {:02x}{:02x}{:02x}{:02x}, got {:02x}{:02x}{:02x}{:02x}",
-                computed_fingerprint[0], computed_fingerprint[1], computed_fingerprint[2], computed_fingerprint[3],
-                checkpoint.signature.key_fingerprint[0], checkpoint.signature.key_fingerprint[1],
-                checkpoint.signature.key_fingerprint[2], checkpoint.signature.key_fingerprint[3]
+                "Checkpoint key fingerprint mismatch: expected {:02x}{:02x}..., got {:02x}{:02x}...",
+                computed_fingerprint[0], computed_fingerprint[1],
+                checkpoint.signature.key_fingerprint[0], checkpoint.signature.key_fingerprint[1]
             )));
         }
 
@@ -662,10 +663,14 @@ impl RekorKeyring {
         if checkpoint.note.size == proof_tree_size {
             // Verify root hashes match
             if checkpoint.note.hash != *proof_root_hash {
+                // SECURITY (Issue #9): Don't expose full 32-byte hashes in error messages
+                // Only show first 8 bytes (16 hex chars) to aid debugging without full disclosure
+                let checkpoint_preview = hex::encode(&checkpoint.note.hash[..8]);
+                let proof_preview = hex::encode(&proof_root_hash[..8]);
                 return Err(WSError::RekorError(format!(
-                    "Checkpoint root hash does not match proof root hash:\n  Checkpoint: {}\n  Proof:      {}",
-                    hex::encode(&checkpoint.note.hash),
-                    hex::encode(proof_root_hash)
+                    "Checkpoint root hash mismatch (showing first 8 bytes):\n  Checkpoint: {}...\n  Proof:      {}...",
+                    checkpoint_preview,
+                    proof_preview
                 )));
             }
             log::debug!("Checkpoint matches inclusion proof (same tree size)");
