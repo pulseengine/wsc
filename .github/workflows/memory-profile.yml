@@ -49,26 +49,31 @@ jobs:
       run: cargo test --no-run --release
 
     - name: Run tests with ByteHound profiling
-      env:
-        MEMORY_PROFILER_LOG: warn
-        LD_PRELOAD: ${{ env.HOME }}/libbytehound.so
       run: |
+        # Set LD_PRELOAD to the ByteHound library
+        export LD_PRELOAD=$HOME/libbytehound.so
+        export MEMORY_PROFILER_LOG=warn
+
         # Run a subset of tests or specific test
         cargo test --release -- --test-threads=1 --nocapture || true
 
         echo "ByteHound profiling data generated"
-        ls -lh memory-profiling_*.dat
+        ls -lh memory-profiling_*.dat || echo "No profiling data files found"
 
     - name: Upload profiling data
+      if: success() || failure()
       uses: actions/upload-artifact@v4
       with:
         name: bytehound-profiles
         path: memory-profiling_*.dat
         retention-days: 7
+        if-no-files-found: warn
 
     - name: Generate ByteHound summary
+      if: success() || failure()
       run: |
-        if [ -f memory-profiling_*.dat ]; then
+        # Check if any profiling data files exist
+        if ls memory-profiling_*.dat 1> /dev/null 2>&1; then
           echo "## 📊 ByteHound Memory Profile" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Memory profiling data has been collected." >> $GITHUB_STEP_SUMMARY
@@ -80,4 +85,9 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Files:**" >> $GITHUB_STEP_SUMMARY
           ls -lh memory-profiling_*.dat | awk '{print "- " $9 " (" $5 ")"}' >> $GITHUB_STEP_SUMMARY
+        else
+          echo "## ⚠️ ByteHound Memory Profile" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "No memory profiling data was generated." >> $GITHUB_STEP_SUMMARY
+          echo "This may indicate that ByteHound was not properly loaded or tests did not run." >> $GITHUB_STEP_SUMMARY
         fi
