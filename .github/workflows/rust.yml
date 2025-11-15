@@ -91,3 +91,34 @@ jobs:
       run: cargo test --test keyless_integration -- --ignored --nocapture
       env:
         RUST_LOG: debug
+
+  # Rekor verification tests with fresh data
+  rekor-verification:
+    name: Rekor Verification Tests (Fresh Data)
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Fetch Fresh Rekor Data
+      id: update-rekor
+      run: |
+        ./scripts/update-rekor-test-data.sh > rekor-data.txt 2>&1
+        echo "✅ Fetched fresh Rekor test data"
+
+    - name: Run Rekor Verification Tests
+      # Continue even if tests fail - data might be stale or API unavailable
+      continue-on-error: true
+      run: |
+        echo "📝 Note: These tests use hardcoded data and may fail if not recently updated"
+        cargo test signature::keyless::rekor_verifier::tests -- --ignored --nocapture
+      env:
+        RUST_LOG: debug
+
+    - name: Upload Rekor Data (on failure)
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: rekor-fresh-data
+        path: rekor-data.txt
+        retention-days: 7
