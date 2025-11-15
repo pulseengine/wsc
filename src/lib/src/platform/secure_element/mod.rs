@@ -184,16 +184,16 @@ impl SecureElementProvider {
             }
         }
 
-        #[cfg(feature = "se050")]
-        {
-            // Try SE050
-            if let Ok(provider) = se050::Se050Provider::new(_bus_path, 0x48) {
-                return Ok(SecureElementProvider {
-                    inner: Box::new(provider),
-                    chip_type: ChipType::Se050,
-                });
-            }
-        }
+        // TODO(se050): Add SE050 detection when implemented
+        // #[cfg(feature = "se050")]
+        // {
+        //     if let Ok(provider) = se050::Se050Provider::new(_bus_path, 0x48) {
+        //         return Ok(SecureElementProvider {
+        //             inner: Box::new(provider),
+        //             chip_type: ChipType::Se050,
+        //         });
+        //     }
+        // }
 
         Err(WSError::HardwareError(
             "No secure element detected on I2C bus".to_string(),

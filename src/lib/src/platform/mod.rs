@@ -397,15 +397,10 @@ pub fn detect_platform() -> Result<Box<dyn SecureKeyProvider>, WSError> {
 pub fn list_available_providers() -> Vec<(String, Box<dyn SecureKeyProvider>)> {
     let mut providers = Vec::new();
 
-    #[cfg(feature = "tpm2")]
-    {
-        if let Ok(provider) = tpm2::Tpm2Provider::new() {
-            providers.push((
-                "TPM 2.0".to_string(),
-                Box::new(provider) as Box<dyn SecureKeyProvider>,
-            ));
-        }
-    }
+    // TODO(tpm2): Add TPM 2.0 provider detection when implemented
+    // TODO(sgx): Add SGX provider detection when implemented
+    // TODO(trustzone): Add TrustZone provider detection when implemented
+    // TODO(se050): Add SE050 provider detection when implemented
 
     #[cfg(feature = "secure-element")]
     {
