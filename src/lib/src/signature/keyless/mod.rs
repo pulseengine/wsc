@@ -1,4 +1,4 @@
-/// Keyless signing support for wasmsign2
+/// Keyless signing support for wsc
 ///
 /// This module implements keyless (ephemeral key) signing using:
 /// - OIDC identity tokens (GitHub Actions, Google Cloud, GitLab CI)

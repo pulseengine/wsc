@@ -50,7 +50,7 @@ register_toolchains("@rust_toolchains//:all")
 # dependencies to be Bazel targets, not Cargo dependencies!
 crate = use_extension("@rules_rust//crate_universe:extension.bzl", "crate")
 crate.from_cargo(
-    name = "wasmsign2_deps",
+    name = "wsc_deps",
     cargo_lockfile = "//:Cargo.lock",
     manifests = ["//:Cargo.toml"],  # Workspace root is sufficient
     supported_platform_triples = [
@@ -62,7 +62,7 @@ crate.from_cargo(
         "wasm32-wasip2",  # WASM target support
     ],
 )
-use_repo(crate, "wasmsign2_deps")
+use_repo(crate, "wsc_deps")
 
 # WASI WIT interface definitions
 wasi_wit_ext = use_extension("@rules_wasm_component//wasm:extensions.bzl", "wasi_wit")
