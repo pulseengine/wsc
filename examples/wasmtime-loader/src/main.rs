@@ -20,7 +20,7 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
-use wsc::signature::PublicKeySet;
+use wsc::PublicKeySet;
 
 /// Verification policy for component loading
 #[derive(Debug, Clone, Copy)]
@@ -52,7 +52,7 @@ fn load_verified_component(
     match policy {
         VerificationPolicy::Strict => {
             log::info!("Verifying signature (strict mode)");
-            keys.verify(&bytes).with_context(|| {
+            keys.verify(&mut bytes.as_slice(), None).with_context(|| {
                 format!(
                     "Signature verification failed for: {}\n\
                      Component must have a valid signature from a trusted key.\n\
@@ -64,7 +64,7 @@ fn load_verified_component(
         }
         VerificationPolicy::Lenient => {
             log::info!("Verifying signature (lenient mode)");
-            match keys.verify(&bytes) {
+            match keys.verify(&mut bytes.as_slice(), None) {
                 Ok(_) => {
                     log::info!("✓ Signature verified successfully");
                 }
@@ -127,9 +127,9 @@ fn main() -> Result<()> {
     // Try to load keys from keys/ directory
     let key_path = Path::new("examples/wasmtime-loader/keys/trusted.pub");
     if key_path.exists() {
-        keys.insert_from_file(key_path)
+        keys.insert_any_file(key_path)
             .with_context(|| format!("Failed to load key: {}", key_path.display()))?;
-        log::info!("Loaded {} trusted key(s)", keys.items().count());
+        log::info!("Loaded {} trusted key(s)", keys.items().len());
     } else {
         log::warn!("No trusted keys found at: {}", key_path.display());
         log::warn!("All signature verifications will fail in strict mode");
@@ -157,8 +157,8 @@ fn main() -> Result<()> {
 
     // Provide host "print" function
     linker
-        .root()
-        .func_wrap("host", "print", |mut _caller, (s,): (String,)| {
+        .instance("host")?
+        .func_wrap("print", |mut _caller, (s,): (String,)| {
             println!("Component says: {}", s);
             Ok(())
         })?;

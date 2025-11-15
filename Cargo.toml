@@ -5,6 +5,9 @@ members = [
     "src/lib",
     "src/component",
 ]
+exclude = [
+    "examples/wasmtime-loader",
+]
 
 [workspace.package]
 version = "0.2.7"
