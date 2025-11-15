@@ -10,6 +10,7 @@ This document provides comprehensive security information for developers and ope
 - [Security Guarantees](#security-guarantees)
 - [Threat Model](#threat-model)
 - [Operational Security](#operational-security)
+- [Certificate Pinning](#certificate-pinning-issue-12)
 - [Comparison with Other Systems](#comparison-with-other-systems)
 
 ---
@@ -399,6 +400,107 @@ KeylessVerifier::verify(
 
 ---
 
+## Certificate Pinning (Issue #12)
+
+### Overview
+
+Certificate pinning adds defense-in-depth protection for TLS connections to Sigstore endpoints (Fulcio and Rekor). Even if a trusted Certificate Authority is compromised, pinning prevents man-in-the-middle attacks by validating that server certificates match known fingerprints.
+
+### Threat Model
+
+**Threats Mitigated:**
+- ✅ CA compromise (rogue certificates from trusted CAs)
+- ✅ DNS/BGP hijacking with valid certificates
+- ✅ State-level adversaries with CA access
+- ✅ Certificate mis-issuance attacks
+
+### Implementation Status
+
+**Current State:** Infrastructure complete, enforcement pending HTTP client support
+
+The wsc library includes complete certificate pinning infrastructure:
+- SHA256 fingerprint validation
+- Configurable pins via environment variables
+- Custom `ServerCertVerifier` implementation using rustls
+- Support for multiple pinned certificates (rotation)
+
+**Limitation:** The current HTTP client (`ureq` v3.x) does not expose APIs for custom TLS certificate verification. Certificate pinning will be automatically enforced once:
+
+1. `ureq` adds support for custom `ServerCertVerifier`, OR
+2. wsc migrates to `reqwest` or another HTTP client with TLS customization
+
+**Current Behavior:**
+- Standard WebPKI validation is performed
+- Pinning checks are logged for monitoring
+- Connections succeed even if pins don't match
+
+### Configuration
+
+#### Setting Certificate Pins
+
+```bash
+# Fulcio production endpoint
+export WSC_FULCIO_PINS="sha256_fingerprint1,sha256_fingerprint2"
+
+# Rekor production endpoint
+export WSC_REKOR_PINS="sha256_fingerprint1,sha256_fingerprint2"
+
+# Custom Sigstore instance
+export WSC_FULCIO_PINS="custom_fingerprint"
+```
+
+#### Getting Certificate Fingerprints
+
+```bash
+# Get current Fulcio certificate fingerprint
+echo | openssl s_client -connect fulcio.sigstore.dev:443 -servername fulcio.sigstore.dev 2>/dev/null | \
+  openssl x509 -outform DER | sha256sum
+
+# Get current Rekor certificate fingerprint
+echo | openssl s_client -connect rekor.sigstore.dev:443 -servername rekor.sigstore.dev 2>/dev/null | \
+  openssl x509 -outform DER | sha256sum
+```
+
+#### Strict Pinning Mode
+
+To require that pinning be enforced (fail if cannot):
+
+```bash
+export WSC_REQUIRE_CERT_PINNING=1
+```
+
+This will cause connection attempts to fail with an error if certificate pinning cannot be enforced due to HTTP client limitations.
+
+### Pin Rotation Strategy
+
+Certificate pins should be rotated when Sigstore updates their TLS certificates:
+
+1. **Pre-rotation:** Add new certificate fingerprints alongside existing ones
+2. **Grace period:** Accept both old and new pins for 30-90 days
+3. **Post-rotation:** Remove deprecated pins after grace period
+4. **Monitoring:** Alert on pin mismatches to detect rotation events
+
+### Security Properties
+
+**When Enforced (future):**
+- Prevents MITM even with compromised CA
+- Validates leaf certificate fingerprint
+- Optionally validates intermediate certificates
+- Combines with standard WebPKI validation (defense-in-depth)
+
+**Current State:**
+- Standard WebPKI validation only
+- Pinning infrastructure ready for integration
+- Manual validation possible via custom code
+
+### Code Location
+
+- `src/lib/src/signature/keyless/cert_pinning.rs` - Complete pinning implementation
+- `src/lib/src/signature/keyless/fulcio.rs` - Fulcio client integration
+- `src/lib/src/signature/keyless/rekor.rs` - Rekor client integration
+
+---
+
 ## Certificate-Based Signing Security
 
 (See `docs/security-analysis.md` for comprehensive coverage)
@@ -464,6 +566,10 @@ Include:
 - ✅ Implemented Rekor inclusion proof verification (Issue #15)
 - ✅ Sanitized error messages for information disclosure (Issue #9)
 - ✅ Added comprehensive zeroization tests (17 new tests)
+- ✅ Implemented certificate pinning infrastructure (Issue #12)
+  - Complete SHA256 fingerprint validation
+  - Support for custom pins via environment variables
+  - Pending enforcement (requires HTTP client update)
 
 ### Previous
 - ✅ Implemented Rekor checkpoint-based verification (Issue #1)

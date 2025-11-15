@@ -13,6 +13,7 @@ pub mod signer;
 pub mod cert_verifier;
 pub mod merkle;
 pub mod rekor_verifier;
+pub mod cert_pinning;
 
 pub use format::*;
 pub use oidc::{

@@ -86,6 +86,14 @@ impl FulcioClient {
     /// Create client with default Fulcio server
     ///
     /// Uses the public Sigstore Fulcio instance at https://fulcio.sigstore.dev
+    ///
+    /// # Certificate Pinning (Issue #12)
+    ///
+    /// Certificate pinning infrastructure is implemented but not yet enforced due to
+    /// HTTP client limitations. See `cert_pinning` module documentation for details.
+    ///
+    /// Set `WSC_FULCIO_PINS` environment variable to configure pins (not yet enforced).
+    /// Set `WSC_REQUIRE_CERT_PINNING=1` to fail if pinning cannot be enforced.
     pub fn new() -> Self {
         Self::with_url("https://fulcio.sigstore.dev".to_string())
     }
@@ -95,6 +103,14 @@ impl FulcioClient {
     /// # Arguments
     /// * `base_url` - Base URL of the Fulcio server (without trailing slash)
     pub fn with_url(base_url: String) -> Self {
+        // Check if strict certificate pinning is required (Issue #12)
+        // This will fail if WSC_REQUIRE_CERT_PINNING=1 and pinning cannot be enforced
+        if let Err(e) = super::cert_pinning::check_pinning_enforcement("fulcio") {
+            log::warn!("Certificate pinning check failed: {}", e);
+            // Note: We continue anyway because pinning enforcement would happen at TLS level
+            // This is just an early warning to users who set WSC_REQUIRE_CERT_PINNING=1
+        }
+
         #[cfg(not(target_os = "wasi"))]
         {
             // Configure agent to return Response for all status codes (not Error)

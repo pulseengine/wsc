@@ -76,6 +76,9 @@ pub enum WSError {
     #[error("Certificate verification failed: {0}")]
     CertificateError(String),
 
+    #[error("Certificate pinning failed: {0}")]
+    CertificatePinningError(String),
+
     #[error("Keyless signature format error: {0}")]
     KeylessFormatError(String),
 

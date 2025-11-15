@@ -1687,6 +1687,7 @@ dependencies = [
  "pem",
  "rcgen",
  "regex",
+ "rustls",
  "rustls-pki-types",
  "rustls-webpki",
  "serde",
@@ -1701,6 +1702,7 @@ dependencies = [
  "uuid",
  "wasi 0.14.7+wasi-0.2.4",
  "wat",
+ "webpki-roots",
  "x509-parser",
  "zeroize",
 ]

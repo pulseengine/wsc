@@ -47,6 +47,8 @@ ecdsa = { version = "0.16", features = ["signing"] }
 # Certificate chain verification (WebPKI)
 rustls-webpki = { version = "0.103", default-features = false, features = ["std"] }
 rustls-pki-types = { version = "1.11", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
+webpki-roots = "1.0"
 pem = "3.0"
 const-oid = { version = "0.9", default-features = false, features = ["db"] }
 # X.509 certificate generation for provisioning
