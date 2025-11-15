@@ -7,6 +7,7 @@ use x509_parser::prelude::*;
 // Re-export RekorEntry from the rekor module
 pub use super::rekor::RekorEntry;
 use super::cert_verifier::CertificatePool;
+use super::rekor_verifier::RekorKeyring;
 
 /// Binary format version for keyless signatures
 pub const KEYLESS_VERSION: u8 = 0x02;
@@ -368,19 +369,35 @@ impl KeylessSignature {
 
     /// Verify the Rekor inclusion proof
     ///
-    /// This is a stub implementation that always returns Ok.
-    /// Full implementation will:
-    /// - Verify the Merkle tree inclusion proof
-    /// - Check the signed entry timestamp
-    /// - Validate against Rekor's public key
-    /// - Ensure timestamp is within certificate validity period
+    /// This performs complete Rekor transparency log verification:
+    /// - Verifies the Merkle tree inclusion proof
+    /// - Checks the signed entry timestamp (SET)
+    /// - Validates against Rekor's public key
+    /// - Verifies checkpoint signatures when available
+    ///
+    /// # Security
+    ///
+    /// This ensures that the signature was actually logged in Rekor's
+    /// transparency log, providing non-repudiation and auditability.
     ///
     /// # Returns
     ///
     /// Ok if the inclusion proof is valid, error otherwise
     pub fn verify_rekor_inclusion(&self) -> Result<(), WSError> {
-        // Stub: Always return Ok for now
-        // TODO: Implement full Rekor inclusion proof verification
+        log::debug!("Verifying Rekor inclusion proof for entry {}", self.rekor_entry.uuid);
+
+        // Load Rekor public keys from embedded trust root
+        let keyring = RekorKeyring::from_embedded_trust_root()
+            .map_err(|e| WSError::RekorError(format!("Failed to load Rekor public keys: {}", e)))?;
+
+        // Verify the inclusion proof using the full verification implementation
+        // This performs:
+        // 1. Merkle tree inclusion proof verification (RFC 6962)
+        // 2. Signed Entry Timestamp (SET) verification
+        // 3. Checkpoint signature verification (if available)
+        keyring.verify_inclusion_proof(&self.rekor_entry)?;
+
+        log::debug!("Rekor inclusion proof verified successfully");
         Ok(())
     }
 }
@@ -569,10 +586,19 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_rekor_inclusion_stub() {
+    fn test_verify_rekor_inclusion_rejects_invalid() {
         let sig = create_test_signature();
-        // Stub implementation should always return Ok
-        assert!(sig.verify_rekor_inclusion().is_ok());
+        // The test data has invalid Rekor entry, so verification should fail
+        // This proves that real verification is happening (not just a stub)
+        let result = sig.verify_rekor_inclusion();
+        assert!(result.is_err(), "Expected verification to fail with invalid test data");
+
+        // Verify we get a Rekor error (not some other error type)
+        match result {
+            Err(WSError::RekorError(_)) => {}, // Expected
+            Err(e) => panic!("Expected RekorError, got: {:?}", e),
+            Ok(_) => panic!("Expected verification to fail"),
+        }
     }
 
     #[test]
