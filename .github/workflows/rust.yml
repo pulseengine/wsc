@@ -70,25 +70,45 @@ jobs:
       if: matrix.build-system == 'bazel'
       run: bazel build //src/cli:wasmsign_cli
 
-    - name: Validate WASM Components (Bazel)
+    - name: Validate Build Outputs (Bazel)
       if: matrix.build-system == 'bazel'
       run: |
-        echo "✅ Built WASM components:"
-        ls -lh bazel-bin/src/component/ || echo "Component artifacts location may vary"
-        ls -lh bazel-bin/src/cli/ || echo "CLI artifacts location may vary"
-        find bazel-bin -name "*.wasm" -type f | while read wasm_file; do
-          echo "Checking $wasm_file"
-          file "$wasm_file"
-        done
+        echo "✅ Querying build outputs:"
 
-    - name: Upload WASM Artifacts (Bazel)
+        # Query actual output files for each target
+        echo "Component library outputs:"
+        bazel cquery //src/component:signing_lib --output=files 2>/dev/null || echo "  (query failed)"
+
+        echo "CLI binary outputs:"
+        bazel cquery //src/cli:wasmsign_cli --output=files 2>/dev/null || echo "  (query failed)"
+
+        # List what's actually in bazel-bin
+        echo ""
+        echo "Contents of bazel-bin/src/component/:"
+        ls -lh bazel-bin/src/component/ 2>/dev/null || echo "  (directory not found)"
+
+        echo ""
+        echo "Contents of bazel-bin/src/cli/:"
+        ls -lh bazel-bin/src/cli/ 2>/dev/null || echo "  (directory not found)"
+
+        # Find any WASM files (if built with --platforms flag)
+        echo ""
+        echo "Searching for WASM files:"
+        find bazel-bin -name "*.wasm" -type f 2>/dev/null | while read wasm_file; do
+          echo "  Found: $wasm_file"
+          file "$wasm_file"
+        done || echo "  (no .wasm files found - native build only)"
+
+    - name: Upload Build Artifacts (Bazel)
       if: matrix.build-system == 'bazel'
       uses: actions/upload-artifact@v4
       with:
-        name: wasm-components-${{ matrix.os }}
+        name: bazel-outputs-${{ matrix.os }}
         path: |
-          bazel-bin/src/component/**/*.wasm
-          bazel-bin/src/cli/**/*.wasm
+          bazel-bin/src/component/**/*
+          bazel-bin/src/cli/**/*
+          !bazel-bin/**/*.d
+          !bazel-bin/**/*.rlib
         retention-days: 7
         if-no-files-found: warn
 
