@@ -6,7 +6,7 @@
 /// # Example
 ///
 /// ```no_run
-/// use wasmsign2::keyless::{RekorClient, FulcioCertificate};
+/// use wsc::keyless::{RekorClient, FulcioCertificate};
 ///
 /// // Create a Rekor client
 /// let client = RekorClient::new();

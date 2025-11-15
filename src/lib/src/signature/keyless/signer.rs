@@ -52,10 +52,10 @@ impl KeylessSigner {
     ///
     /// # Example
     /// ```no_run
-    /// use wasmsign2::keyless::KeylessSigner;
+    /// use wsc::keyless::KeylessSigner;
     ///
     /// let signer = KeylessSigner::new()?;
-    /// # Ok::<(), wasmsign2::WSError>(())
+    /// # Ok::<(), wsc::WSError>(())
     /// ```
     pub fn new() -> Result<Self, WSError> {
         Self::with_config(KeylessConfig::default())
@@ -65,7 +65,7 @@ impl KeylessSigner {
     ///
     /// # Example
     /// ```no_run
-    /// use wasmsign2::keyless::{KeylessSigner, KeylessConfig};
+    /// use wsc::keyless::{KeylessSigner, KeylessConfig};
     ///
     /// let config = KeylessConfig {
     ///     fulcio_url: Some("https://fulcio.sigstore.dev".to_string()),
@@ -73,7 +73,7 @@ impl KeylessSigner {
     ///     skip_rekor: false,
     /// };
     /// let signer = KeylessSigner::with_config(config)?;
-    /// # Ok::<(), wasmsign2::WSError>(())
+    /// # Ok::<(), wsc::WSError>(())
     /// ```
     pub fn with_config(config: KeylessConfig) -> Result<Self, WSError> {
         // Auto-detect OIDC provider
@@ -120,7 +120,7 @@ impl KeylessSigner {
     ///
     /// # Example
     /// ```no_run
-    /// use wasmsign2::{Module, keyless::KeylessSigner};
+    /// use wsc::{Module, keyless::KeylessSigner};
     ///
     /// let module = Module::deserialize_from_file("module.wasm")?;
     /// let signer = KeylessSigner::new()?;
@@ -129,7 +129,7 @@ impl KeylessSigner {
     /// signed_module.serialize_to_file("signed.wasm")?;
     /// println!("Signed by: {}", signature.get_identity()?);
     /// println!("Rekor entry: {}", signature.rekor_entry.uuid);
-    /// # Ok::<(), wasmsign2::WSError>(())
+    /// # Ok::<(), wsc::WSError>(())
     /// ```
     pub fn sign_module(
         &self,
@@ -279,7 +279,7 @@ impl KeylessVerifier {
     ///
     /// # Example
     /// ```no_run
-    /// use wasmsign2::{Module, keyless::KeylessVerifier};
+    /// use wsc::{Module, keyless::KeylessVerifier};
     ///
     /// let module = Module::deserialize_from_file("signed.wasm")?;
     /// KeylessVerifier::verify(
@@ -288,7 +288,7 @@ impl KeylessVerifier {
     ///     Some("https://github.com/login/oauth")
     /// )?;
     /// println!("Signature verified successfully!");
-    /// # Ok::<(), wasmsign2::WSError>(())
+    /// # Ok::<(), wsc::WSError>(())
     /// ```
     pub fn verify(
         _module: &Module,
