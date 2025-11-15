@@ -30,12 +30,12 @@ rust_binary(
     },
     deps = [
         "//src/lib:wsc",
-        "@wasmsign2_deps//:clap",
-        "@wasmsign2_deps//:env_logger",
-        "@wasmsign2_deps//:regex",
-        "@wasmsign2_deps//:ureq-3.1.2",
-        "@wasmsign2_deps//:uri_encode",
-        "@wasmsign2_deps//:wasi",
+        "@wsc_deps//:clap",
+        "@wsc_deps//:env_logger",
+        "@wsc_deps//:regex",
+        "@wsc_deps//:ureq-3.1.2",
+        "@wsc_deps//:uri_encode",
+        "@wsc_deps//:wasi",
     ],
     # No feature flags needed - HTTP client selected via #[cfg(target_os = "wasi")]
 )

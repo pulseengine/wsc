@@ -20,7 +20,7 @@ struct Component;
 #[cfg(target_arch = "wasm32")]
 impl Guest for Component {
     fn keygen() -> Result<KeyPair, String> {
-        // Generate a new key pair using wasmsign2 library
+        // Generate a new key pair using wsc library
         let kp = WS2KeyPair::generate();
 
         Ok(KeyPair {
