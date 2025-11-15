@@ -52,6 +52,10 @@ const-oid = { version = "0.9", default-features = false, features = ["db"] }
 # X.509 certificate generation for provisioning
 rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
 
+[dev-dependencies]
+# WAT (WebAssembly Text) parser for tests
+wat = "1.221"
+
 [features]
 default = ["software-keys"]
 # Software-based key storage (always available, for development/testing)
