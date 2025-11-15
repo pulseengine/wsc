@@ -23,6 +23,13 @@ pub mod platform;
 /// environments. Includes CA management, device identity, and provisioning workflows.
 pub mod provisioning;
 
+/// Component composition and provenance tracking
+///
+/// Provides support for WebAssembly component composition with full provenance
+/// tracking, enabling supply chain security and compliance with SLSA, in-toto,
+/// and SBOM standards.
+pub mod composition;
+
 #[allow(unused_imports)]
 pub use error::*;
 #[allow(unused_imports)]
