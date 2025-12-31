@@ -9,9 +9,9 @@
 
 use super::{
     detect_oidc_provider, FulcioClient, KeylessSignature, OidcProvider,
-    RekorClient, RekorEntry,
+    RekorClient, RekorEntry, RekorKeyring,
 };
-use crate::{Module, WSError};
+use crate::{Module, WSError, SectionLike};
 use ecdsa::SigningKey;
 use p256::ecdsa::Signature;
 use sha2::{Digest, Sha256};
@@ -52,10 +52,10 @@ impl KeylessSigner {
     ///
     /// # Example
     /// ```no_run
-    /// use wasmsign2::keyless::KeylessSigner;
+    /// use wsc::keyless::KeylessSigner;
     ///
     /// let signer = KeylessSigner::new()?;
-    /// # Ok::<(), wasmsign2::WSError>(())
+    /// # Ok::<(), wsc::WSError>(())
     /// ```
     pub fn new() -> Result<Self, WSError> {
         Self::with_config(KeylessConfig::default())
@@ -65,7 +65,7 @@ impl KeylessSigner {
     ///
     /// # Example
     /// ```no_run
-    /// use wasmsign2::keyless::{KeylessSigner, KeylessConfig};
+    /// use wsc::keyless::{KeylessSigner, KeylessConfig};
     ///
     /// let config = KeylessConfig {
     ///     fulcio_url: Some("https://fulcio.sigstore.dev".to_string()),
@@ -73,7 +73,7 @@ impl KeylessSigner {
     ///     skip_rekor: false,
     /// };
     /// let signer = KeylessSigner::with_config(config)?;
-    /// # Ok::<(), wasmsign2::WSError>(())
+    /// # Ok::<(), wsc::WSError>(())
     /// ```
     pub fn with_config(config: KeylessConfig) -> Result<Self, WSError> {
         // Auto-detect OIDC provider
@@ -120,7 +120,7 @@ impl KeylessSigner {
     ///
     /// # Example
     /// ```no_run
-    /// use wasmsign2::{Module, keyless::KeylessSigner};
+    /// use wsc::{Module, keyless::KeylessSigner};
     ///
     /// let module = Module::deserialize_from_file("module.wasm")?;
     /// let signer = KeylessSigner::new()?;
@@ -129,7 +129,7 @@ impl KeylessSigner {
     /// signed_module.serialize_to_file("signed.wasm")?;
     /// println!("Signed by: {}", signature.get_identity()?);
     /// println!("Rekor entry: {}", signature.rekor_entry.uuid);
-    /// # Ok::<(), wasmsign2::WSError>(())
+    /// # Ok::<(), wsc::WSError>(())
     /// ```
     pub fn sign_module(
         &self,
@@ -242,77 +242,136 @@ impl KeylessSigner {
         signature: &KeylessSignature,
     ) -> Result<Module, WSError> {
         let signature_bytes = signature.to_bytes()?;
+        log::debug!("Embedding keyless signature: {} bytes", signature_bytes.len());
 
-        // Create a custom section for the signature
-        // Note: This is a simplified version. In production, we should use
-        // the existing Module::attach_signature() method or similar.
-        // For now, we'll return the module as-is and let the caller handle embedding.
-        // TODO: Integrate with Module's signature attachment mechanism
-
-        log::warn!("Signature embedding not yet integrated with Module API");
-        log::debug!("Signature size: {} bytes", signature_bytes.len());
-
-        // Return the module unchanged for now
-        // The signature_bytes should be attached using Module's existing API
-        Ok(module)
+        // Use Module's existing attach_signature mechanism
+        module.attach_signature(&signature_bytes)
     }
 }
 
 /// Keyless signature verification
 pub struct KeylessVerifier;
 
+/// Result of keyless signature verification
+#[derive(Debug, Clone)]
+pub struct KeylessVerificationResult {
+    /// The identity (email/subject) from the certificate
+    pub identity: String,
+    /// The OIDC issuer URL
+    pub issuer: String,
+    /// The Rekor log index
+    pub rekor_log_index: u64,
+    /// The Rekor entry UUID
+    pub rekor_uuid: String,
+}
+
 impl KeylessVerifier {
+    /// Extract keyless signature from a module's signature section
+    pub fn extract_signature(module: &Module) -> Result<KeylessSignature, WSError> {
+        // Find the signature section
+        let sig_section = module.sections.iter().find(|s| s.is_signature_header());
+
+        let sig_section = sig_section.ok_or(WSError::NoSignatures)?;
+
+        // Get the payload
+        let payload = match sig_section {
+            crate::Section::Custom(custom) => custom.payload(),
+            _ => return Err(WSError::NoSignatures),
+        };
+
+        // Try to parse as keyless signature
+        KeylessSignature::from_bytes(payload)
+    }
+
     /// Verify a keyless signature
     ///
     /// This method performs comprehensive verification:
     /// 1. Extracts the keyless signature from the module
-    /// 2. Verifies the certificate chain
-    /// 3. Checks certificate expiration (with grace period)
-    /// 4. Verifies the signature against the module hash
-    /// 5. Verifies the Rekor inclusion proof
-    /// 6. Optionally checks identity and issuer
+    /// 2. Verifies the certificate chain against Fulcio roots
+    /// 3. Verifies the Rekor SET (Signed Entry Timestamp)
+    /// 4. Optionally validates identity and issuer claims
     ///
     /// # Arguments
     /// * `module` - The signed WASM module
     /// * `expected_identity` - Optional identity to verify (e.g., "user@example.com")
     /// * `expected_issuer` - Optional OIDC issuer to verify (e.g., "https://github.com/login/oauth")
     ///
+    /// # Returns
+    /// `KeylessVerificationResult` with signer details if verification succeeds
+    ///
     /// # Example
     /// ```no_run
-    /// use wasmsign2::{Module, keyless::KeylessVerifier};
+    /// use wsc::{Module, keyless::KeylessVerifier};
     ///
     /// let module = Module::deserialize_from_file("signed.wasm")?;
-    /// KeylessVerifier::verify(
+    /// let result = KeylessVerifier::verify(
     ///     &module,
     ///     Some("user@example.com"),
     ///     Some("https://github.com/login/oauth")
     /// )?;
-    /// println!("Signature verified successfully!");
-    /// # Ok::<(), wasmsign2::WSError>(())
+    /// println!("Signed by: {}", result.identity);
+    /// # Ok::<(), wsc::WSError>(())
     /// ```
     pub fn verify(
-        _module: &Module,
-        _expected_identity: Option<&str>,
-        _expected_issuer: Option<&str>,
-    ) -> Result<(), WSError> {
+        module: &Module,
+        expected_identity: Option<&str>,
+        expected_issuer: Option<&str>,
+    ) -> Result<KeylessVerificationResult, WSError> {
         log::info!("Starting keyless signature verification");
 
         // Step 1: Extract signature from module
-        // TODO: Implement signature extraction from module custom section
-        log::warn!("Signature extraction not yet implemented");
+        log::debug!("Extracting keyless signature from module");
+        let keyless_sig = Self::extract_signature(module)?;
 
-        // For now, return an error indicating this is not yet implemented
-        Err(WSError::InternalError(
-            "Keyless signature verification not yet fully implemented".to_string(),
-        ))
+        // Step 2: Verify certificate chain
+        log::debug!("Verifying certificate chain against Fulcio roots");
+        keyless_sig.verify_cert_chain()?;
+        log::info!("Certificate chain verified successfully");
 
-        // Future implementation:
-        // 1. Extract KeylessSignature from module custom section
-        // 2. Verify certificate chain
-        // 3. Check certificate expiration
-        // 4. Verify signature matches module hash
-        // 5. Verify Rekor inclusion proof
-        // 6. Check identity/issuer if provided
+        // Step 3: Verify Rekor SET (Signed Entry Timestamp)
+        if !keyless_sig.rekor_entry.uuid.is_empty() && keyless_sig.rekor_entry.uuid != "skipped" {
+            log::debug!("Verifying Rekor SET");
+            let verifier = RekorKeyring::from_embedded_trust_root()?;
+            verifier.verify_set(&keyless_sig.rekor_entry)?;
+            log::info!("Rekor SET verified successfully");
+        } else {
+            log::warn!("Rekor verification skipped (no Rekor entry)");
+        }
+
+        // Step 4: Extract identity and issuer from certificate
+        let identity = keyless_sig.get_identity()?;
+        let issuer = keyless_sig.get_issuer()?;
+
+        // Step 5: Validate identity if expected
+        if let Some(expected) = expected_identity {
+            if identity != expected {
+                return Err(WSError::CertificateError(format!(
+                    "Identity mismatch: expected '{}', got '{}'",
+                    expected, identity
+                )));
+            }
+            log::info!("Identity verified: {}", identity);
+        }
+
+        // Step 6: Validate issuer if expected
+        if let Some(expected) = expected_issuer {
+            if issuer != expected {
+                return Err(WSError::CertificateError(format!(
+                    "Issuer mismatch: expected '{}', got '{}'",
+                    expected, issuer
+                )));
+            }
+            log::info!("Issuer verified: {}", issuer);
+        }
+
+        log::info!("Keyless verification completed successfully");
+
+        Ok(KeylessVerificationResult {
+            identity,
+            issuer,
+            rekor_log_index: keyless_sig.rekor_entry.log_index,
+            rekor_uuid: keyless_sig.rekor_entry.uuid,
+        })
     }
 }
 
@@ -375,15 +434,12 @@ mod tests {
     }
 
     #[test]
-    fn test_keyless_verifier_not_implemented() {
-        // Create an empty module
+    fn test_keyless_verifier_no_signature() {
+        // Create an empty module (no signature)
         let module = Module::default();
         let result = KeylessVerifier::verify(&module, None, None);
+        // Should fail with NoSignatures error
         assert!(result.is_err());
-        if let Err(WSError::InternalError(msg)) = result {
-            assert!(msg.contains("not yet fully implemented"));
-        } else {
-            panic!("Expected InternalError");
-        }
+        assert!(matches!(result, Err(WSError::NoSignatures)));
     }
 }

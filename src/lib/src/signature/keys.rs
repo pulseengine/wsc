@@ -147,9 +147,9 @@ impl fmt::Debug for PublicKey {
         write!(
             f,
             "PublicKey {{ [{}] - key_id: {:?} }}",
-            Hex::encode_to_string(self.pk.as_ref()).unwrap(),
+            Hex::encode_to_string(self.pk.as_ref()).unwrap_or_else(|_| "<hex error>".to_string()),
             self.key_id()
-                .map(|key_id| format!("[{}]", Hex::encode_to_string(key_id).unwrap()))
+                .map(|key_id| format!("[{}]", Hex::encode_to_string(key_id).unwrap_or_else(|_| "<hex error>".to_string())))
         )
     }
 }
@@ -246,7 +246,7 @@ impl fmt::Debug for SecretKey {
         write!(
             f,
             "SecretKey {{ [{}] }}",
-            Hex::encode_to_string(self.sk.as_ref()).unwrap(),
+            Hex::encode_to_string(self.sk.as_ref()).unwrap_or_else(|_| "<hex error>".to_string()),
         )
     }
 }

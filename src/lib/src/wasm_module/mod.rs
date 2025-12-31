@@ -178,7 +178,7 @@ impl SectionLike for CustomSection {
             SIGNATURE_SECTION_DELIMITER_NAME => format!(
                 "custom section: [{}]\n- delimiter: [{}]\n",
                 self.name,
-                Hex::encode_to_string(self.payload()).unwrap()
+                Hex::encode_to_string(self.payload()).unwrap_or_else(|_| "<hex encoding error>".to_string())
             ),
             SIGNATURE_SECTION_HEADER_NAME => {
                 let signature_data = match SignatureData::deserialize(self.payload()) {
@@ -186,41 +186,34 @@ impl SectionLike for CustomSection {
                     _ => return "undecodable signature header".to_string(),
                 };
                 let mut s = String::new();
-                writeln!(
+                let _ = writeln!(
                     s,
                     "- specification version: 0x{:02x}",
                     signature_data.specification_version,
-                )
-                .unwrap();
-                writeln!(s, "- content_type: 0x{:02x}", signature_data.content_type,).unwrap();
-                writeln!(
+                );
+                let _ = writeln!(s, "- content_type: 0x{:02x}", signature_data.content_type);
+                let _ = writeln!(
                     s,
                     "- hash function: 0x{:02x} (SHA-256)",
                     signature_data.hash_function
-                )
-                .unwrap();
-                writeln!(s, "- (hashes,signatures) set:").unwrap();
+                );
+                let _ = writeln!(s, "- (hashes,signatures) set:");
                 for signed_parts in &signature_data.signed_hashes_set {
-                    writeln!(s, "  - hashes:").unwrap();
+                    let _ = writeln!(s, "  - hashes:");
                     for hash in &signed_parts.hashes {
-                        writeln!(s, "    - [{}]", Hex::encode_to_string(hash).unwrap()).unwrap();
+                        let hex = Hex::encode_to_string(hash).unwrap_or_else(|_| "<hex error>".to_string());
+                        let _ = writeln!(s, "    - [{}]", hex);
                     }
-                    writeln!(s, "  - signatures:").unwrap();
+                    let _ = writeln!(s, "  - signatures:");
                     for signature in &signed_parts.signatures {
-                        write!(
-                            s,
-                            "    - [{}]",
-                            Hex::encode_to_string(&signature.signature).unwrap()
-                        )
-                        .unwrap();
+                        let hex = Hex::encode_to_string(&signature.signature).unwrap_or_else(|_| "<hex error>".to_string());
+                        let _ = write!(s, "    - [{}]", hex);
                         match &signature.key_id {
-                            None => writeln!(s, " (no key id)").unwrap(),
-                            Some(key_id) => writeln!(
-                                s,
-                                " (key id: [{}])",
-                                Hex::encode_to_string(key_id).unwrap()
-                            )
-                            .unwrap(),
+                            None => { let _ = writeln!(s, " (no key id)"); }
+                            Some(key_id) => {
+                                let key_hex = Hex::encode_to_string(key_id).unwrap_or_else(|_| "<hex error>".to_string());
+                                let _ = writeln!(s, " (key id: [{}])", key_hex);
+                            }
                         }
                     }
                 }

@@ -1,4 +1,4 @@
-/// Keyless signing support for wasmsign2
+/// Keyless signing support for wsc
 ///
 /// This module implements keyless (ephemeral key) signing using:
 /// - OIDC identity tokens (GitHub Actions, Google Cloud, GitLab CI)
@@ -21,6 +21,6 @@ pub use oidc::{
 };
 pub use fulcio::{FulcioClient, FulcioCertificate};
 pub use rekor::{RekorClient, RekorEntry};
-pub use signer::{KeylessConfig, KeylessSigner, KeylessVerifier};
+pub use signer::{KeylessConfig, KeylessSigner, KeylessVerifier, KeylessVerificationResult};
 pub use cert_verifier::{CertificatePool, CertVerificationError};
 pub use rekor_verifier::RekorKeyring;

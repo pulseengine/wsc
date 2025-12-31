@@ -1,16 +1,30 @@
 # wsc - WebAssembly Signature Component
 
-A tool and library for signing WebAssembly modules with enhanced Rekor verification and Bazel integration.
+**Sign in the cloud. Verify anywhere.**
+
+A tool and library for signing WebAssembly modules with embedded signatures that can be verified completely offline - perfect for embedded systems, edge devices, and air-gapped environments.
+
+## Why wsc?
+
+Unlike OCI registry signatures (Cosign) that require network access at verification time, wsc embeds signatures directly in the WASM module. This enables:
+
+| Scenario | Cosign/OCI | wsc |
+|----------|------------|-----|
+| IoT device with intermittent WiFi | Needs connectivity | Verify offline |
+| Industrial controller | Requires registry access | Signature embedded |
+| Edge CDN node | Registry latency | Local verification |
+| Air-gapped network | Cannot verify | Works offline |
 
 ## About
 
 **wsc** is an enhanced WebAssembly signing toolkit built on the foundation of [wasmsign2](https://github.com/wasm-signatures/wasmsign2) by Frank Denis. While maintaining compatibility with the WebAssembly modules signatures proposal, wsc adds production-oriented features:
 
-- **Enhanced Rekor Verification**: Checkpoint-based verification with security hardening (key fingerprint validation, origin validation, cross-shard attack prevention)
+- **Offline-First Verification**: Embedded signatures survive distribution - no network required at runtime
+- **Keyless Signing**: Full Sigstore/Fulcio/Rekor integration with OIDC authentication (GitHub Actions, Google Cloud, GitLab CI)
+- **Keyless Verification**: Verify Sigstore signatures offline with certificate chain and SET validation
+- **Enhanced Rekor Verification**: Checkpoint-based verification with security hardening
 - **Bazel Integration**: Full BUILD and MODULE.bazel support for hermetic builds
 - **WIT Component Model**: Both library (`wsc-component.wasm`) and CLI (`wsc-cli.wasm`) builds
-- **Keyless Signing**: Full Sigstore/Fulcio integration with OIDC authentication
-- **CI/CD Pipeline**: Automated testing and release workflows
 
 ## About This Project
 
@@ -73,93 +87,107 @@ bazel build //src/cli:wsc
 
 ## Usage
 
-### Keyless Signing
+### Keyless Signing (Sigstore)
 
-wsc supports keyless signing using [Sigstore](https://www.sigstore.dev/):
+wsc supports keyless signing using [Sigstore](https://www.sigstore.dev/) - sign in CI, verify anywhere:
 
 ```bash
-wsc sign --keyless module.wasm
+# Sign in GitHub Actions (or any OIDC-enabled CI)
+wsc sign --keyless -i module.wasm -o signed.wasm
 ```
 
 This will:
-1. Authenticate via OIDC (GitHub, Google, Microsoft)
+1. Authenticate via OIDC (GitHub Actions, Google Cloud, GitLab CI)
 2. Generate an ephemeral key pair
 3. Obtain a certificate from Fulcio
 4. Sign the module
 5. Upload signature to Rekor transparency log
-6. Embed the certificate and Rekor bundle
+6. Embed the certificate and Rekor proof in the module
+
+### Keyless Verification (Offline)
+
+Verify a keyless-signed module - no network required:
+
+```bash
+# Basic verification (offline)
+wsc verify --keyless -i signed.wasm
+
+# With identity constraints
+wsc verify --keyless -i signed.wasm \
+  --cert-identity "user@example.com" \
+  --cert-oidc-issuer "https://token.actions.githubusercontent.com"
+```
+
+Verification performs:
+1. Certificate chain validation against embedded Fulcio roots
+2. Rekor SET (Signed Entry Timestamp) verification
+3. Identity and issuer validation (optional)
+
+### Traditional Key-Based Signing
+
+#### Creating a Key Pair
+
+```bash
+wsc keygen -k secret.key -K public.key
+```
+
+#### Signing a Module
+
+```bash
+wsc sign -k secret.key -i module.wasm -o signed.wasm
+```
+
+#### Verifying a Module
+
+```bash
+wsc verify -K public.key -i signed.wasm
+```
 
 ### Inspecting a Module
 
 ```bash
-wsc info module.wasm
+wsc show -i module.wasm
 ```
 
-### Creating a Key Pair
+### Detaching/Attaching Signatures
 
 ```bash
-wsc generate -o keypair.txt
-```
+# Detach signature to a file
+wsc detach -i signed.wasm -o unsigned.wasm -S signature.bin
 
-### Signing a WebAssembly Module
-
-```bash
-wsc sign -k keypair.txt module.wasm
-```
-
-### Verifying a WebAssembly Module
-
-```bash
-wsc verify -p public_key.txt module.wasm
-```
-
-### Verifying a WebAssembly Module Against Multiple Public Keys
-
-```bash
-wsc verify -p key1.txt -p key2.txt module.wasm
-```
-
-### Detaching a Signature from a Module
-
-```bash
-wsc detach -o signature.txt module.wasm
-```
-
-### Embedding a Detached Signature in a Module
-
-```bash
-wsc attach -s signature.txt module.wasm
+# Attach signature from a file
+wsc attach -i unsigned.wasm -o signed.wasm -S signature.bin
 ```
 
 ### Partial Verification
 
-wsc can verify signatures while ignoring specific custom sections:
+wsc can verify signatures for specific custom sections:
 
 ```bash
-wsc verify -p public_key.txt -i custom_section module.wasm
+wsc verify -K public.key -i signed.wasm --split "custom_section_regex"
 ```
 
 ### OpenSSH Keys Support
 
-wsc supports OpenSSH-formatted keys:
+wsc supports OpenSSH-formatted Ed25519 keys:
 
 ```bash
 # Generate SSH key
-ssh-keygen -t ed25519 -f key.pem
+ssh-keygen -t ed25519 -f key
 
-# Sign module
-wsc sign -k key.pem module.wasm
+# Sign module (use --ssh flag)
+wsc sign -k key --ssh -i module.wasm -o signed.wasm
 
 # Verify module
-wsc verify -p key.pem.pub module.wasm
+wsc verify -K key.pub --ssh -i signed.wasm
 ```
 
 ### GitHub Integration
 
-Fetch a user's SSH public keys from GitHub:
+Verify using a GitHub user's SSH public keys:
 
 ```bash
-wsc verify -g github_username module.wasm
+wsc verify --from-github username -i signed.wasm
 ```
 
 ## Enhanced Features

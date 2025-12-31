@@ -171,9 +171,13 @@ impl FulcioClient {
         );
 
         // Split base64 into 64-character lines (standard PEM format)
+        // Note: base64 is always valid ASCII/UTF-8, so from_utf8 cannot fail here
         let mut pem = String::from("-----BEGIN PUBLIC KEY-----\n");
         for chunk in b64.as_bytes().chunks(64) {
-            pem.push_str(std::str::from_utf8(chunk).unwrap());
+            pem.push_str(
+                std::str::from_utf8(chunk)
+                    .map_err(|e| WSError::FulcioError(format!("Invalid UTF-8 in base64: {}", e)))?,
+            );
             pem.push('\n');
         }
         pem.push_str("-----END PUBLIC KEY-----");

@@ -11,7 +11,7 @@
 //! cargo test --test keyless_integration -- --ignored
 //! ```
 
-use wasmsign2::{Module, keyless::{KeylessSigner, KeylessConfig, detect_oidc_provider}};
+use wsc::{Module, WSError, keyless::{KeylessSigner, KeylessConfig, detect_oidc_provider}};
 
 /// Helper to create a minimal valid WASM module
 fn create_test_module() -> Module {
@@ -85,7 +85,7 @@ fn test_github_actions_keyless_signing() {
     // This validates our SET and inclusion proof verification against REAL Rekor responses
     println!("\n🔐 Testing Rekor verification with REAL production data...");
 
-    use wasmsign2::keyless::RekorClient;
+    use wsc::keyless::RekorClient;
     let rekor_client = RekorClient::new();
     let verification_result = rekor_client.verify_inclusion(&signature.rekor_entry);
 
@@ -182,8 +182,8 @@ fn test_keyless_signing_without_oidc_fails() {
         Err(e) => {
             println!("No OIDC provider detected (expected in dev environment): {}", e);
             assert!(
-                matches!(e, wasmsign2::WSError::NoOidcProvider) ||
-                matches!(e, wasmsign2::WSError::OidcError(_))
+                matches!(e, WSError::NoOidcProvider) ||
+                matches!(e, WSError::OidcError(_))
             );
         }
     }
@@ -191,7 +191,7 @@ fn test_keyless_signing_without_oidc_fails() {
 
 #[test]
 fn test_signature_format_roundtrip() {
-    use wasmsign2::keyless::{KeylessSignature, RekorEntry};
+    use wsc::keyless::{KeylessSignature, RekorEntry};
 
     // Test that we can serialize and deserialize a keyless signature
     let original = KeylessSignature::new(
