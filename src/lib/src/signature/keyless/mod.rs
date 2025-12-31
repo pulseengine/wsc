@@ -23,4 +23,4 @@ pub use oidc::{
 };
 pub use rekor::{RekorClient, RekorEntry};
 pub use rekor_verifier::RekorKeyring;
-pub use signer::{KeylessConfig, KeylessSigner, KeylessVerifier};
+pub use signer::{KeylessConfig, KeylessSigner, KeylessVerifier, KeylessVerificationResult};

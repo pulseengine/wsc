@@ -185,6 +185,7 @@ impl FulcioClient {
         let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, spki_der);
 
         // Split base64 into 64-character lines (standard PEM format)
+        // Note: base64 is always valid ASCII/UTF-8, so from_utf8 cannot fail here
         let mut pem = String::from("-----BEGIN PUBLIC KEY-----\n");
         for chunk in b64.as_bytes().chunks(64) {
             // SAFETY: base64 encoding always produces valid UTF-8 (only uses ASCII chars A-Z, a-z, 0-9, +, /, =)

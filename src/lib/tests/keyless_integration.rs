@@ -12,7 +12,7 @@
 //! ```
 
 use wsc::{
-    Module,
+    Module, WSError,
     keyless::{KeylessConfig, KeylessSigner, detect_oidc_provider},
 };
 
@@ -188,8 +188,8 @@ fn test_keyless_signing_without_oidc_fails() {
                 e
             );
             assert!(
-                matches!(e, wsc::WSError::NoOidcProvider)
-                    || matches!(e, wsc::WSError::OidcError(_))
+                matches!(e, WSError::NoOidcProvider)
+                    || matches!(e, WSError::OidcError(_))
             );
         }
     }

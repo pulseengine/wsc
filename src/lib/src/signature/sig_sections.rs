@@ -59,7 +59,9 @@ impl SignatureForHashes {
             varint::put(&mut writer, 0)?; // No certificate chain
         }
 
-        Ok(writer.into_inner().unwrap())
+        writer
+            .into_inner()
+            .map_err(|e| WSError::IOError(std::io::Error::other(format!("buffer flush failed: {}", e))))
     }
 
     pub fn deserialize(bin: impl AsRef<[u8]>) -> Result<Self, WSError> {
@@ -116,7 +118,9 @@ impl SignedHashes {
         for signature in &self.signatures {
             varint::put_slice(&mut writer, &signature.serialize()?)?;
         }
-        Ok(writer.into_inner().unwrap())
+        writer
+            .into_inner()
+            .map_err(|e| WSError::IOError(std::io::Error::other(format!("buffer flush failed: {}", e))))
     }
 
     pub fn deserialize(bin: impl AsRef<[u8]>) -> Result<Self, WSError> {
@@ -161,7 +165,9 @@ impl SignatureData {
         for signed_hashes in &self.signed_hashes_set {
             varint::put_slice(&mut writer, &signed_hashes.serialize()?)?;
         }
-        Ok(writer.into_inner().unwrap())
+        writer
+            .into_inner()
+            .map_err(|e| WSError::IOError(std::io::Error::other(format!("buffer flush failed: {}", e))))
     }
 
     pub fn deserialize(bin: impl AsRef<[u8]>) -> Result<Self, WSError> {

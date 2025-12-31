@@ -177,6 +177,27 @@ fn start() -> Result<(), WSError> {
                         .help("Input file"),
                 )
                 .arg(
+                    Arg::new("keyless")
+                        .long("keyless")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with_all(["public_key", "from_github", "ssh", "signature_file", "splits"])
+                        .help("Verify keyless signature (Sigstore/Fulcio/Rekor)"),
+                )
+                .arg(
+                    Arg::new("cert_identity")
+                        .value_name("identity")
+                        .long("cert-identity")
+                        .requires("keyless")
+                        .help("Expected identity in the certificate (e.g., user@example.com)"),
+                )
+                .arg(
+                    Arg::new("cert_oidc_issuer")
+                        .value_name("issuer")
+                        .long("cert-oidc-issuer")
+                        .requires("keyless")
+                        .help("Expected OIDC issuer (e.g., https://token.actions.githubusercontent.com)"),
+                )
+                .arg(
                     Arg::new("public_key")
                         .value_name("public_key_file")
                         .long("public-key")
@@ -449,60 +470,82 @@ fn start() -> Result<(), WSError> {
         }
     } else if let Some(matches) = matches.subcommand_matches("verify") {
         let input_file = matches.get_one::<String>("in").map(|s| s.as_str());
-        let signature_file = matches
-            .get_one::<String>("signature_file")
-            .map(|s| s.as_str());
-        let splits = matches.get_one::<String>("splits").map(|s| s.as_str());
-        let signed_sections_rx = match splits {
-            None => None,
-            Some(splits) => Some(
-                RegexBuilder::new(splits)
-                    .case_insensitive(false)
-                    .multi_line(false)
-                    .dot_matches_new_line(false)
-                    .size_limit(1_000_000)
-                    .dfa_size_limit(1_000_000)
-                    .nest_limit(1000)
-                    .build()
-                    .map_err(|_| WSError::InvalidArgument)?,
-            ),
-        };
-        let pk = if let Some(github_account) =
-            matches.get_one::<String>("from_github").map(|s| s.as_str())
-        {
-            PublicKey::from_openssh(&get_pks_from_github(github_account)?)?
-        } else {
-            let pk_file = matches
-                .get_one::<String>("public_key")
-                .map(|s| s.as_str())
-                .ok_or(WSError::UsageError("Missing public key file"))?;
-            match matches.get_flag("ssh") {
-                false => PublicKey::from_file(pk_file)?,
-                true => PublicKey::from_openssh_file(pk_file)?,
-            }
-        }
-        .attach_default_key_id();
         let input_file = input_file.ok_or(WSError::UsageError("Missing input file"))?;
-        let mut detached_signatures_ = vec![];
-        let detached_signatures = match signature_file {
-            None => None,
-            Some(signature_file) => {
-                open_file(signature_file)?.read_to_end(&mut detached_signatures_)?;
-                Some(detached_signatures_.as_slice())
+
+        if matches.get_flag("keyless") {
+            // Keyless verification path
+            use wsc::keyless::KeylessVerifier;
+
+            let cert_identity = matches.get_one::<String>("cert_identity").map(|s| s.as_str());
+            let cert_oidc_issuer = matches.get_one::<String>("cert_oidc_issuer").map(|s| s.as_str());
+
+            println!("Verifying keyless signature...");
+            let module = Module::deserialize_from_file(input_file)?;
+            let result = KeylessVerifier::verify(&module, cert_identity, cert_oidc_issuer)?;
+
+            println!("\n✓ Keyless signature is valid");
+            println!("  Identity: {}", result.identity);
+            println!("  Issuer: {}", result.issuer);
+            if !result.rekor_uuid.is_empty() && result.rekor_uuid != "skipped" {
+                println!("  Rekor entry: {}", result.rekor_uuid);
+                println!("  Rekor index: {}", result.rekor_log_index);
             }
-        };
-        let mut reader = BufReader::new(open_file(input_file)?);
-        if let Some(signed_sections_rx) = &signed_sections_rx {
-            pk.verify_multi(&mut reader, detached_signatures, |section| match section {
-                Section::Standard(_) => true,
-                Section::Custom(custom_section) => {
-                    signed_sections_rx.is_match(custom_section.name())
-                }
-            })?;
         } else {
-            pk.verify(&mut reader, detached_signatures)?;
+            // Traditional key-based verification
+            let signature_file = matches
+                .get_one::<String>("signature_file")
+                .map(|s| s.as_str());
+            let splits = matches.get_one::<String>("splits").map(|s| s.as_str());
+            let signed_sections_rx = match splits {
+                None => None,
+                Some(splits) => Some(
+                    RegexBuilder::new(splits)
+                        .case_insensitive(false)
+                        .multi_line(false)
+                        .dot_matches_new_line(false)
+                        .size_limit(1_000_000)
+                        .dfa_size_limit(1_000_000)
+                        .nest_limit(1000)
+                        .build()
+                        .map_err(|_| WSError::InvalidArgument)?,
+                ),
+            };
+            let pk = if let Some(github_account) =
+                matches.get_one::<String>("from_github").map(|s| s.as_str())
+            {
+                PublicKey::from_openssh(&get_pks_from_github(github_account)?)?
+            } else {
+                let pk_file = matches
+                    .get_one::<String>("public_key")
+                    .map(|s| s.as_str())
+                    .ok_or(WSError::UsageError("Missing public key file"))?;
+                match matches.get_flag("ssh") {
+                    false => PublicKey::from_file(pk_file)?,
+                    true => PublicKey::from_openssh_file(pk_file)?,
+                }
+            }
+            .attach_default_key_id();
+            let mut detached_signatures_ = vec![];
+            let detached_signatures = match signature_file {
+                None => None,
+                Some(signature_file) => {
+                    open_file(signature_file)?.read_to_end(&mut detached_signatures_)?;
+                    Some(detached_signatures_.as_slice())
+                }
+            };
+            let mut reader = BufReader::new(open_file(input_file)?);
+            if let Some(signed_sections_rx) = &signed_sections_rx {
+                pk.verify_multi(&mut reader, detached_signatures, |section| match section {
+                    Section::Standard(_) => true,
+                    Section::Custom(custom_section) => {
+                        signed_sections_rx.is_match(custom_section.name())
+                    }
+                })?;
+            } else {
+                pk.verify(&mut reader, detached_signatures)?;
+            }
+            println!("Signature is valid.");
         }
-        println!("Signature is valid.");
     } else if let Some(matches) = matches.subcommand_matches("detach") {
         let input_file = matches.get_one::<String>("in").map(|s| s.as_str());
         let output_file = matches.get_one::<String>("out").map(|s| s.as_str());

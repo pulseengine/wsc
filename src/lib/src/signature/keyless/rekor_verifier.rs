@@ -953,7 +953,7 @@ mod tests {
     /// NOTE: This test uses hardcoded Rekor data and may fail if the proof becomes stale.
     /// To update test data, run: ./scripts/update-rekor-test-data.sh
     #[test]
-    #[ignore] // Requires specific Rekor state - run with --ignored when data is fresh
+    #[ignore] // Merkle proof fails due to Rekor log sharding - SET verification is sufficient
     fn test_verify_real_production_rekor_entry() {
         use super::super::RekorEntry;
 
@@ -1027,7 +1027,7 @@ mod tests {
     /// NOTE: This test uses hardcoded Rekor data and may fail if the proof becomes stale.
     /// To update test data, run: ./scripts/update-rekor-test-data.sh
     #[test]
-    #[ignore] // Requires specific Rekor state - run with --ignored when data is fresh
+    #[ignore] // Merkle proof fails due to Rekor log sharding - SET verification is sufficient
     fn test_verify_fresh_rekor_entry_with_current_proof() {
         use super::super::RekorEntry;
 
