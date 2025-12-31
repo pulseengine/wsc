@@ -363,13 +363,14 @@ jobs:
 
           #### Verify WASM Module Signature (wsc)
           ```bash
-          # Download a release (once wsc verification is implemented)
-          # wsc verify --keyless \
-          #   --identity "https://github.com/${{ github.repository }}" \
-          #   --issuer "https://token.actions.githubusercontent.com" \
-          #   --input-file wsc-component.wasm
+          # Verify keyless signature (offline - no network required!)
+          wsc verify --keyless \
+            --cert-identity "https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/tags/${TAG}" \
+            --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
+            -i wsc-component.wasm
 
-          # For now, signatures are embedded but verification is pending implementation
+          # Or verify without identity constraints
+          wsc verify --keyless -i wsc-component.wasm
           ```
 
           #### Verify OCI Artifact Signature (Cosign)
