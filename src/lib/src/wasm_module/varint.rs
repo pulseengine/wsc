@@ -56,8 +56,18 @@ pub fn put_slice(writer: &mut impl Write, bytes: impl AsRef<[u8]>) -> Result<(),
     Ok(())
 }
 
+/// Maximum size for a length-prefixed slice (16 MB)
+///
+/// This limit prevents denial-of-service attacks via malformed length prefixes
+/// that could cause excessive memory allocation.
+pub const MAX_SLICE_LEN: usize = 16 * 1024 * 1024;
+
 pub fn get_slice(reader: &mut impl Read) -> Result<Vec<u8>, WSError> {
-    let len = get32(reader)? as _;
+    let len = get32(reader)? as usize;
+    // Prevent DoS via excessive memory allocation
+    if len > MAX_SLICE_LEN {
+        return Err(WSError::ParseError);
+    }
     let mut bytes = vec![0u8; len];
     reader.read_exact(&mut bytes)?;
     Ok(bytes)
@@ -208,5 +218,31 @@ mod tests {
         let mut reader = io::Cursor::new(data);
         let result = get_slice(&mut reader);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_slice_excessive_length() {
+        // This is the exact input that the fuzzer found causing OOM
+        // It decodes to a length > MAX_SLICE_LEN
+        let data = vec![0xff, 0xff, 0xff, 0xff, 0x0a, 0xff];
+        let mut reader = io::Cursor::new(data);
+        let result = get_slice(&mut reader);
+        // Should return error, not OOM
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), WSError::ParseError));
+    }
+
+    #[test]
+    fn test_get_slice_max_allowed_length() {
+        // Test that we can still allocate up to MAX_SLICE_LEN
+        let mut data = Vec::new();
+        // Write a reasonable length (1000 bytes)
+        put(&mut data, 1000).unwrap();
+        data.extend(vec![0u8; 1000]);
+
+        let mut reader = io::Cursor::new(data);
+        let result = get_slice(&mut reader);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 1000);
     }
 }

@@ -21,6 +21,7 @@
 /// ```
 use crate::error::WSError;
 use crate::provisioning::{CertificateConfig, DeviceIdentity};
+use crate::secure_file;
 use crate::signature::{KeyPair, PublicKey};
 use base64::Engine;
 use rcgen::{
@@ -547,35 +548,24 @@ impl PrivateCA {
     ///
     /// IMPORTANT: Protect the CA private key!
     /// - Store on encrypted filesystem
-    /// - Restrict file permissions (0600)
+    /// - File permissions are set to 0600 (owner read/write only) on Unix
     /// - For Root CA, keep offline in HSM
+    /// - On non-Unix systems, a warning is logged that permissions cannot be enforced
     pub fn save_to_directory(&self, dir: impl AsRef<Path>) -> Result<(), WSError> {
         let dir = dir.as_ref();
         fs::create_dir_all(dir)
             .map_err(|e| WSError::HardwareError(format!("Failed to create directory: {}", e)))?;
 
-        // Save private key
+        // Save private key with secure permissions (0600 on Unix)
         let key_path = dir.join("ca.key");
         let key_pem = format!(
             "-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----\n",
             base64::prelude::BASE64_STANDARD.encode(self.keypair.sk.to_bytes())
         );
-        fs::write(&key_path, key_pem)
-            .map_err(|e| WSError::HardwareError(format!("Failed to write key: {}", e)))?;
+        secure_file::write_secure_string(&key_path, &key_pem)
+            .map_err(|e| WSError::HardwareError(format!("Failed to write key securely: {}", e)))?;
 
-        // Set restrictive permissions on Unix
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&key_path)
-                .map_err(|e| WSError::HardwareError(format!("Failed to get metadata: {}", e)))?
-                .permissions();
-            perms.set_mode(0o600); // Owner read/write only
-            fs::set_permissions(&key_path, perms)
-                .map_err(|e| WSError::HardwareError(format!("Failed to set permissions: {}", e)))?;
-        }
-
-        // Save certificate
+        // Save certificate (not secret, doesn't need restrictive permissions)
         let cert_path = dir.join("ca.crt");
         fs::write(cert_path, self.certificate_pem())
             .map_err(|e| WSError::HardwareError(format!("Failed to write certificate: {}", e)))?;
@@ -819,5 +809,66 @@ mod tests {
         println!("  Root: {}", root_cert.subject());
         println!("  Intermediate: {}", intermediate_cert.subject());
         println!("  Device: {}", device_cert.subject());
+    }
+
+    // ============================================================================
+    // SECURITY TESTS: File Permission Enforcement (Issue #10)
+    // ============================================================================
+
+    #[cfg(unix)]
+    #[test]
+    fn test_ca_save_to_directory_sets_secure_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let config = CAConfig::new("Test Corp", "Test Root CA");
+        let ca = PrivateCA::create_root(config).unwrap();
+
+        // Save to temp directory
+        let temp_dir = std::env::temp_dir().join("wsc_test_ca_perms");
+        ca.save_to_directory(&temp_dir).unwrap();
+
+        // Verify private key has secure permissions (0600)
+        let key_path = temp_dir.join("ca.key");
+        let metadata = std::fs::metadata(&key_path).unwrap();
+        let mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "CA private key should have mode 0600, got {:o}",
+            mode
+        );
+
+        // Certificate doesn't need restrictive permissions
+        let cert_path = temp_dir.join("ca.crt");
+        assert!(cert_path.exists(), "Certificate file should exist");
+
+        // Cleanup
+        std::fs::remove_dir_all(temp_dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_ca_private_key_not_world_readable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let config = CAConfig::new("Test Corp", "Test Root CA");
+        let ca = PrivateCA::create_root(config).unwrap();
+
+        let temp_dir = std::env::temp_dir().join("wsc_test_ca_no_world");
+        ca.save_to_directory(&temp_dir).unwrap();
+
+        let key_path = temp_dir.join("ca.key");
+        let metadata = std::fs::metadata(&key_path).unwrap();
+        let mode = metadata.permissions().mode();
+
+        // Check that group (0o070) and others (0o007) have no permissions
+        assert_eq!(
+            mode & 0o077,
+            0,
+            "CA private key should not be accessible to group or others, mode: {:o}",
+            mode & 0o777
+        );
+
+        // Cleanup
+        std::fs::remove_dir_all(temp_dir).ok();
     }
 }

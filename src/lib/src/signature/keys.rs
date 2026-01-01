@@ -1,4 +1,5 @@
 pub use crate::error::*;
+use crate::secure_file;
 
 use ct_codecs::{Encoder, Hex};
 use ssh_keys::{self, openssh};
@@ -206,18 +207,30 @@ impl SecretKey {
     }
 
     /// Read a secret key from a file.
+    ///
+    /// # Security
+    ///
+    /// On Unix systems, this function checks file permissions and logs a warning
+    /// if the file is readable by group or others. Secret keys should have mode
+    /// 0600 (owner read/write only) to prevent credential theft.
     pub fn from_file(file: impl AsRef<Path>) -> Result<Self, WSError> {
-        let mut fp = File::open(file)?;
-        let mut bytes = vec![];
-        fp.read_to_end(&mut bytes)?;
+        let bytes = secure_file::read_secure(file.as_ref())?;
         Self::from_bytes(&bytes)
     }
 
     /// Save a secret key to a file.
+    ///
+    /// # Security
+    ///
+    /// On Unix systems, this function creates the file with mode 0600
+    /// (owner read/write only) to prevent credential theft. The restrictive
+    /// permissions are set atomically when the file is created, so there is
+    /// no window where the file is accessible to other users.
+    ///
+    /// On non-Unix systems, a warning is logged that permissions cannot be
+    /// enforced, and the file is created with default permissions.
     pub fn to_file(&self, file: impl AsRef<Path>) -> Result<(), WSError> {
-        let mut fp = File::create(file)?;
-        fp.write_all(&self.to_bytes())?;
-        Ok(())
+        secure_file::write_secure(file.as_ref(), &self.to_bytes())
     }
 
     /// Parse an OpenSSH secret key.
@@ -837,5 +850,116 @@ mod tests {
         let temp_file = std::env::temp_dir().join("nonexistent_any.key");
         let result = set.insert_any_file(&temp_file);
         assert!(result.is_err());
+    }
+
+    // ============================================================================
+    // SECURITY TESTS: File Permission Enforcement (Issue #10)
+    // ============================================================================
+
+    #[cfg(unix)]
+    #[test]
+    fn test_secret_key_to_file_sets_secure_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let kp = create_test_keypair();
+        let temp_file = std::env::temp_dir().join("test_sk_perms.key");
+
+        // Write secret key
+        kp.sk.to_file(&temp_file).unwrap();
+
+        // Verify permissions are 0600 (owner read/write only)
+        let metadata = std::fs::metadata(&temp_file).unwrap();
+        let mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "Secret key file should have mode 0600, got {:o}",
+            mode
+        );
+
+        // Cleanup
+        std::fs::remove_file(temp_file).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_secret_key_to_file_no_group_or_world_access() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let kp = create_test_keypair();
+        let temp_file = std::env::temp_dir().join("test_sk_no_world.key");
+
+        // Write secret key
+        kp.sk.to_file(&temp_file).unwrap();
+
+        // Verify no group or world access
+        let metadata = std::fs::metadata(&temp_file).unwrap();
+        let mode = metadata.permissions().mode();
+
+        // Check that group (0o070) and others (0o007) have no permissions
+        assert_eq!(
+            mode & 0o077,
+            0,
+            "Secret key file should not be accessible to group or others, mode: {:o}",
+            mode & 0o777
+        );
+
+        // Cleanup
+        std::fs::remove_file(temp_file).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_secret_key_overwrite_maintains_secure_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let kp1 = create_test_keypair();
+        let kp2 = create_test_keypair();
+        let temp_file = std::env::temp_dir().join("test_sk_overwrite.key");
+
+        // Write first key
+        kp1.sk.to_file(&temp_file).unwrap();
+
+        // Verify initial permissions
+        let mode1 = std::fs::metadata(&temp_file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode1, 0o600);
+
+        // Overwrite with second key
+        kp2.sk.to_file(&temp_file).unwrap();
+
+        // Verify permissions are still secure
+        let mode2 = std::fs::metadata(&temp_file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode2, 0o600,
+            "Permissions should remain 0600 after overwrite"
+        );
+
+        // Verify content is new key
+        let loaded = SecretKey::from_file(&temp_file).unwrap();
+        assert_eq!(loaded.sk.as_ref(), kp2.sk.sk.as_ref());
+
+        // Cleanup
+        std::fs::remove_file(temp_file).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_secret_key_from_file_reads_insecure_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let kp = create_test_keypair();
+        let temp_file = std::env::temp_dir().join("test_sk_insecure_read.key");
+
+        // Create file with insecure permissions manually
+        std::fs::write(&temp_file, kp.sk.to_bytes()).unwrap();
+        let mut perms = std::fs::metadata(&temp_file).unwrap().permissions();
+        perms.set_mode(0o644); // world-readable
+        std::fs::set_permissions(&temp_file, perms).unwrap();
+
+        // Should still read successfully (but would log a warning)
+        let loaded = SecretKey::from_file(&temp_file).unwrap();
+        assert_eq!(loaded.sk.as_ref(), kp.sk.sk.as_ref());
+
+        // Cleanup
+        std::fs::remove_file(temp_file).ok();
     }
 }

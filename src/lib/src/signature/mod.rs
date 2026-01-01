@@ -10,4 +10,10 @@ pub use keys::*;
 pub use matrix::*;
 
 pub(crate) use hash::*;
-pub(crate) use sig_sections::*;
+
+// Re-export signature data structures for fuzzing and advanced use cases
+pub use sig_sections::{
+    SignatureData, SignedHashes, SignatureForHashes,
+    SIGNATURE_SECTION_HEADER_NAME, SIGNATURE_SECTION_DELIMITER_NAME,
+    MAX_HASHES, MAX_SIGNATURES, new_delimiter_section,
+};

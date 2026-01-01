@@ -1,4 +1,8 @@
-pub(crate) mod varint;
+/// Variable-length integer encoding (LEB128)
+///
+/// This module provides functions for reading and writing variable-length
+/// integers in the LEB128 format used by WebAssembly modules.
+pub mod varint;
 
 use crate::signature::*;
 

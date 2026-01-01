@@ -38,6 +38,10 @@ fn test_keyless_config_custom() {
         fulcio_url: Some("https://custom.fulcio.dev".to_string()),
         rekor_url: Some("https://custom.rekor.dev".to_string()),
         skip_rekor: true,
+        use_staging: false,
+        fulcio_pins: vec![],
+        rekor_pins: vec![],
+        require_cert_pinning: false,
     };
     assert_eq!(config.fulcio_url.unwrap(), "https://custom.fulcio.dev");
     assert_eq!(config.rekor_url.unwrap(), "https://custom.rekor.dev");
@@ -135,6 +139,10 @@ fn test_keyless_signing_with_skip_rekor() {
         fulcio_url: None,
         rekor_url: None,
         skip_rekor: true, // Skip Rekor for faster testing
+        use_staging: false,
+        fulcio_pins: vec![],
+        rekor_pins: vec![],
+        require_cert_pinning: false,
     };
 
     let signer = KeylessSigner::with_config(config).expect("Failed to create keyless signer");
@@ -156,6 +164,10 @@ fn test_keyless_signing_with_custom_servers() {
         fulcio_url: Some("https://fulcio.sigstore.dev".to_string()),
         rekor_url: Some("https://rekor.sigstore.dev".to_string()),
         skip_rekor: false,
+        use_staging: false,
+        fulcio_pins: vec![],
+        rekor_pins: vec![],
+        require_cert_pinning: false,
     };
 
     let signer = KeylessSigner::with_config(config).expect("Failed to create keyless signer");

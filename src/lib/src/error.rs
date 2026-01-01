@@ -110,6 +110,10 @@ pub enum WSError {
 
     #[error("Unsupported algorithm: {0}")]
     UnsupportedAlgorithm(String),
+
+    // Time validation errors
+    #[error("Time error: {0}")]
+    TimeError(String),
 }
 
 // X509 error conversion

@@ -1,0 +1,102 @@
+# Fuzz testing workflow for security-critical parsing code
+# Addresses Issue #7: Add fuzz testing for signature parsing/validation logic
+
+name: Fuzz Testing
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Fuzzing duration per target (seconds)'
+        required: false
+        default: '300'
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_varint
+          - fuzz_keyless_signature
+          - fuzz_module_parsing
+          - fuzz_signature_data
+          - fuzz_public_key
+          - fuzz_rekor_entry
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Create corpus directory
+        run: mkdir -p fuzz/corpus/${{ matrix.target }}
+
+      - name: Run fuzzer
+        run: |
+          cd fuzz
+          DURATION=${{ github.event.inputs.duration || '300' }}
+          echo "Fuzzing ${{ matrix.target }} for ${DURATION} seconds..."
+          cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=$DURATION
+        continue-on-error: true
+
+      - name: Upload crash artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload corpus
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-corpus-${{ matrix.target }}
+          path: fuzz/corpus/${{ matrix.target }}/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  report:
+    name: Fuzz Report
+    needs: fuzz
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Check for crashes
+        run: |
+          CRASH_COUNT=0
+          for dir in artifacts/fuzz-artifacts-*/; do
+            if [ -d "$dir" ]; then
+              count=$(find "$dir" -type f -name 'crash-*' 2>/dev/null | wc -l)
+              if [ "$count" -gt 0 ]; then
+                echo "Found $count crash(es) in $dir"
+                CRASH_COUNT=$((CRASH_COUNT + count))
+              fi
+            fi
+          done
+
+          if [ "$CRASH_COUNT" -gt 0 ]; then
+            echo "Total crashes found: $CRASH_COUNT"
+            echo "Please investigate the crash artifacts!"
+            exit 1
+          else
+            echo "No crashes found in any fuzz target."
+          fi

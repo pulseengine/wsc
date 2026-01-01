@@ -1,0 +1,129 @@
+# Example workflow for signing WASM modules with wsc
+#
+# This workflow demonstrates how to:
+# 1. Build and sign WASM modules with Sigstore keyless signing
+# 2. Generate trust bundles for air-gapped verification
+# 3. Upload signed artifacts
+#
+# To use in your project:
+# 1. Copy this file to .github/workflows/
+# 2. Adjust the WASM_PATH to point to your WASM module
+# 3. Store your bundle signing key as a secret (optional)
+
+name: Sign WASM Module
+
+on:
+  push:
+    branches: [ main ]
+  release:
+    types: [ published ]
+  workflow_dispatch:
+    inputs:
+      wasm_path:
+        description: 'Path to WASM module to sign'
+        required: false
+        default: 'target/wasm32-unknown-unknown/release/my_module.wasm'
+
+env:
+  # Path to the WASM module to sign
+  WASM_PATH: ${{ github.event.inputs.wasm_path || 'target/wasm32-unknown-unknown/release/my_module.wasm' }}
+  # wsc version to use
+  WSC_VERSION: '0.4.0'
+
+jobs:
+  sign-wasm:
+    name: Sign WASM Module
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # Required for Sigstore OIDC
+      contents: read
+      attestations: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install wsc
+      run: |
+        # Install from crates.io (when published)
+        # cargo install wsc-cli --version ${{ env.WSC_VERSION }}
+
+        # Or build from source
+        cargo install --git https://github.com/aspect-build/wsc.git wsc-cli
+
+    - name: Build WASM module
+      run: |
+        # Example: Build your Rust WASM module
+        # cargo build --release --target wasm32-unknown-unknown
+
+        # For this example, create a minimal test module
+        mkdir -p $(dirname "$WASM_PATH")
+        printf '\x00\x61\x73\x6d\x01\x00\x00\x00' > "$WASM_PATH"
+
+    - name: Sign WASM with Sigstore keyless
+      id: sign
+      run: |
+        wsc sign --keyless \
+          -i "$WASM_PATH" \
+          -o "${WASM_PATH%.wasm}-signed.wasm"
+
+        echo "signed_path=${WASM_PATH%.wasm}-signed.wasm" >> $GITHUB_OUTPUT
+
+    - name: Verify signature
+      run: |
+        wsc verify --keyless \
+          -i "${{ steps.sign.outputs.signed_path }}"
+
+    - name: Upload signed WASM
+      uses: actions/upload-artifact@v4
+      with:
+        name: signed-wasm-${{ github.sha }}
+        path: ${{ steps.sign.outputs.signed_path }}
+        retention-days: 90
+
+  # Optional: Generate trust bundle for air-gapped devices
+  generate-trust-bundle:
+    name: Generate Trust Bundle
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install wsc
+      run: cargo install --git https://github.com/aspect-build/wsc.git wsc-cli
+
+    - name: Generate bundle keypair
+      run: |
+        # In production, use a secret for the signing key
+        wsc keygen -k /tmp/bundle-sk.key -K bundle-verifier.pub
+
+    - name: Fetch and sign trust bundle
+      run: |
+        # Fetch current Sigstore trust material and sign it
+        wsc bundle fetch \
+          -o trust-bundle-${{ github.ref_name }}.json \
+          --version ${{ github.run_number }} \
+          --validity-days 90 \
+          --sign /tmp/bundle-sk.key
+
+    - name: Inspect bundle
+      run: wsc bundle inspect -i trust-bundle-${{ github.ref_name }}.json
+
+    - name: Upload trust bundle
+      uses: actions/upload-artifact@v4
+      with:
+        name: trust-bundle-${{ github.ref_name }}
+        path: |
+          trust-bundle-${{ github.ref_name }}.json
+          bundle-verifier.pub
+        retention-days: 365
+
+    - name: Attach to release
+      if: github.event_name == 'release'
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          trust-bundle-${{ github.ref_name }}.json
+          bundle-verifier.pub

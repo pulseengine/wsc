@@ -1,0 +1,75 @@
+[package]
+name = "wsc-fuzz"
+version = "0.0.0"
+authors = ["Automatically generated"]
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1.4", features = ["derive"] }
+
+[dependencies.wsc]
+path = "../src/lib"
+
+# Required for fuzzing serde_json parsing
+[dependencies.serde_json]
+version = "1.0"
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+# Fuzz targets
+
+[[bin]]
+name = "fuzz_varint"
+path = "fuzz_targets/fuzz_varint.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_keyless_signature"
+path = "fuzz_targets/fuzz_keyless_signature.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_module_parsing"
+path = "fuzz_targets/fuzz_module_parsing.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_signature_data"
+path = "fuzz_targets/fuzz_signature_data.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_public_key"
+path = "fuzz_targets/fuzz_public_key.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rekor_entry"
+path = "fuzz_targets/fuzz_rekor_entry.rs"
+test = false
+doc = false
+bench = false

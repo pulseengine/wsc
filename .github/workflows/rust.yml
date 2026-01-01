@@ -128,6 +128,94 @@ jobs:
       env:
         RUST_LOG: debug
 
+  # Air-gapped verification end-to-end tests
+  airgapped-e2e:
+    name: Air-Gapped E2E Tests
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Required for OIDC token
+      contents: read
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Air-Gapped Unit Tests
+      run: cargo test --test airgapped_e2e -- --nocapture
+      env:
+        RUST_LOG: info
+
+    - name: Run Air-Gapped Integration Tests (with OIDC)
+      run: cargo test --test airgapped_e2e -- --ignored --nocapture
+      env:
+        RUST_LOG: debug
+
+  # Example: Sign a WASM module and verify with air-gapped flow
+  sign-and-verify-example:
+    name: Sign & Verify Example
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Build CLI
+      run: cargo build --release
+
+    - name: Generate bundle signing keypair
+      run: |
+        ./target/release/wsc keygen -k /tmp/bundle-sk.key -K /tmp/bundle-pk.key
+        echo "Generated bundle signing keypair"
+
+    - name: Fetch and sign trust bundle from Sigstore
+      run: |
+        ./target/release/wsc bundle fetch \
+          -o /tmp/trust-bundle.json \
+          --version 1 \
+          --validity-days 90 \
+          --sign /tmp/bundle-sk.key
+        echo "Fetched and signed trust bundle"
+
+    - name: Inspect trust bundle
+      run: ./target/release/wsc bundle inspect -i /tmp/trust-bundle.json
+
+    - name: Verify trust bundle signature
+      run: |
+        ./target/release/wsc bundle verify \
+          -i /tmp/trust-bundle.json \
+          -K /tmp/bundle-pk.key
+        echo "Trust bundle signature verified"
+
+    - name: Create test WASM module
+      run: |
+        # Create a minimal valid WASM module
+        printf '\x00\x61\x73\x6d\x01\x00\x00\x00' > /tmp/test.wasm
+        echo "Created test WASM module"
+
+    - name: Sign WASM with keyless signing
+      run: |
+        ./target/release/wsc sign --keyless \
+          -i /tmp/test.wasm \
+          -o /tmp/test-signed.wasm
+        echo "Signed WASM module with keyless signing"
+
+    - name: Verify keyless signature
+      run: |
+        ./target/release/wsc verify --keyless \
+          -i /tmp/test-signed.wasm
+        echo "Verified keyless signature"
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: signed-wasm-artifacts
+        path: |
+          /tmp/trust-bundle.json
+          /tmp/bundle-pk.key
+          /tmp/test-signed.wasm
+        retention-days: 7
+
   # Rekor verification tests with fresh data
   rekor-verification:
     name: Rekor Verification Tests (Fresh Data)

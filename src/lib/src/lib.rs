@@ -11,6 +11,20 @@ mod signature;
 mod split;
 mod wasm_module;
 
+/// Secure file operations with restrictive permissions
+///
+/// Provides utilities for securely reading and writing sensitive files
+/// such as private keys and tokens. On Unix systems, it enforces restrictive
+/// permissions (0600 = owner read/write only) to prevent credential theft.
+pub mod secure_file;
+
+/// Time validation for offline-first verification
+///
+/// Provides time source abstraction for embedded and edge devices that may not
+/// have reliable system clocks. Supports multiple strategies including build-time
+/// lower bounds and custom time sources (RTC, GPS, NTP).
+pub mod time;
+
 /// Platform-specific hardware security integration
 ///
 /// Provides unified interface for hardware-backed cryptographic operations
@@ -29,6 +43,13 @@ pub mod provisioning;
 /// tracking, enabling supply chain security and compliance with SLSA, in-toto,
 /// and SBOM standards.
 pub mod composition;
+
+/// Air-gapped verification for embedded devices
+///
+/// Enables offline verification of Sigstore keyless signatures using
+/// pre-provisioned trust bundles. Designed for IoT, automotive, and
+/// edge devices without network access at runtime.
+pub mod airgapped;
 
 #[allow(unused_imports)]
 pub use error::*;
