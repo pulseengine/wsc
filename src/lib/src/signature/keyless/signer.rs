@@ -25,6 +25,31 @@ pub struct KeylessConfig {
     pub rekor_url: Option<String>,
     /// Skip Rekor upload (not recommended for production)
     pub skip_rekor: bool,
+    /// Use Sigstore staging environment instead of production
+    ///
+    /// When true, uses:
+    /// - fulcio.staging.sigstore.dev
+    /// - rekor.staging.sigstore.dev
+    ///
+    /// Can also be set via WSC_SIGSTORE_STAGING=1 environment variable.
+    pub use_staging: bool,
+    /// Custom certificate pins for Fulcio (overrides defaults)
+    ///
+    /// SHA256 fingerprints in hex format (64 characters each).
+    /// If empty, uses built-in production/staging pins.
+    pub fulcio_pins: Vec<String>,
+    /// Custom certificate pins for Rekor (overrides defaults)
+    ///
+    /// SHA256 fingerprints in hex format (64 characters each).
+    /// If empty, uses built-in production/staging pins.
+    pub rekor_pins: Vec<String>,
+    /// Require strict certificate pinning enforcement
+    ///
+    /// When true, operations will fail if certificate pinning cannot be enforced
+    /// due to HTTP client limitations.
+    ///
+    /// Can also be set via WSC_REQUIRE_CERT_PINNING=1 environment variable.
+    pub require_cert_pinning: bool,
 }
 
 
@@ -63,25 +88,70 @@ impl KeylessSigner {
     ///     fulcio_url: Some("https://fulcio.sigstore.dev".to_string()),
     ///     rekor_url: Some("https://rekor.sigstore.dev".to_string()),
     ///     skip_rekor: false,
+    ///     ..Default::default()
     /// };
     /// let signer = KeylessSigner::with_config(config)?;
     /// # Ok::<(), wsc::WSError>(())
     /// ```
     pub fn with_config(config: KeylessConfig) -> Result<Self, WSError> {
+        use super::cert_pinning::{check_pinning_enforcement, PinningConfig};
+
+        // Check if strict certificate pinning is required
+        let require_pinning = config.require_cert_pinning
+            || std::env::var("WSC_REQUIRE_CERT_PINNING").unwrap_or_default() == "1";
+
+        // Determine if staging environment should be used
+        let use_staging = config.use_staging || PinningConfig::is_staging();
+
+        // Log certificate pinning configuration
+        let fulcio_pins = if !config.fulcio_pins.is_empty() {
+            PinningConfig::custom(config.fulcio_pins.clone(), "fulcio (custom)".to_string())
+        } else if use_staging {
+            PinningConfig::fulcio_staging()
+        } else {
+            PinningConfig::fulcio_production()
+        };
+
+        let rekor_pins = if !config.rekor_pins.is_empty() {
+            PinningConfig::custom(config.rekor_pins.clone(), "rekor (custom)".to_string())
+        } else if use_staging {
+            PinningConfig::rekor_staging()
+        } else {
+            PinningConfig::rekor_production()
+        };
+
+        log::info!(
+            "Certificate pinning configured: Fulcio ({} pins for {}), Rekor ({} pins for {})",
+            fulcio_pins.pin_count(),
+            fulcio_pins.service_name(),
+            rekor_pins.pin_count(),
+            rekor_pins.service_name()
+        );
+
+        // Check if pinning can be enforced (currently cannot due to ureq limitations)
+        if require_pinning {
+            check_pinning_enforcement("fulcio")?;
+            check_pinning_enforcement("rekor")?;
+        }
+
         // Auto-detect OIDC provider
         let oidc = detect_oidc_provider()?;
         log::info!("Using OIDC provider: {}", oidc.name());
 
-        // Create Fulcio client
+        // Create Fulcio client with appropriate URL
         let fulcio = if let Some(url) = &config.fulcio_url {
             FulcioClient::with_url(url.clone())
+        } else if use_staging {
+            FulcioClient::with_url("https://fulcio.staging.sigstore.dev".to_string())
         } else {
             FulcioClient::new()
         };
 
-        // Create Rekor client
+        // Create Rekor client with appropriate URL
         let rekor = if let Some(url) = &config.rekor_url {
             RekorClient::with_url(url.clone())
+        } else if use_staging {
+            RekorClient::with_url("https://rekor.staging.sigstore.dev".to_string())
         } else {
             RekorClient::new()
         };
@@ -407,6 +477,10 @@ mod tests {
         assert!(config.fulcio_url.is_none());
         assert!(config.rekor_url.is_none());
         assert!(!config.skip_rekor);
+        assert!(!config.use_staging);
+        assert!(config.fulcio_pins.is_empty());
+        assert!(config.rekor_pins.is_empty());
+        assert!(!config.require_cert_pinning);
     }
 
     #[test]
@@ -415,10 +489,42 @@ mod tests {
             fulcio_url: Some("https://custom.fulcio.dev".to_string()),
             rekor_url: Some("https://custom.rekor.dev".to_string()),
             skip_rekor: true,
+            ..Default::default()
         };
         assert!(config.fulcio_url.is_some());
         assert!(config.rekor_url.is_some());
         assert!(config.skip_rekor);
+    }
+
+    #[test]
+    fn test_keyless_config_staging() {
+        let config = KeylessConfig {
+            use_staging: true,
+            ..Default::default()
+        };
+        assert!(config.use_staging);
+        assert!(config.fulcio_url.is_none()); // Will use staging URL
+        assert!(config.rekor_url.is_none()); // Will use staging URL
+    }
+
+    #[test]
+    fn test_keyless_config_custom_pins() {
+        let config = KeylessConfig {
+            fulcio_pins: vec!["a".repeat(64), "b".repeat(64)],
+            rekor_pins: vec!["c".repeat(64)],
+            ..Default::default()
+        };
+        assert_eq!(config.fulcio_pins.len(), 2);
+        assert_eq!(config.rekor_pins.len(), 1);
+    }
+
+    #[test]
+    fn test_keyless_config_require_cert_pinning() {
+        let config = KeylessConfig {
+            require_cert_pinning: true,
+            ..Default::default()
+        };
+        assert!(config.require_cert_pinning);
     }
 
     #[test]

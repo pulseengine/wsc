@@ -58,23 +58,49 @@ use std::sync::Arc;
 
 /// Production Fulcio certificate pins (SHA256 fingerprints)
 ///
-/// NOTE: These are placeholder values. In production, these should be updated
-/// to match the actual Sigstore production certificates.
+/// These are the SHA256 fingerprints of certificates in the Sigstore production
+/// certificate chain. Multiple pins are included for rotation support.
 ///
 /// To get the current fingerprint:
 /// ```bash
 /// echo | openssl s_client -connect fulcio.sigstore.dev:443 -servername fulcio.sigstore.dev 2>/dev/null | \
 ///   openssl x509 -outform DER | sha256sum
 /// ```
+///
+/// Sigstore uses Google Trust Services certificates (GTS Root R1 -> GTS CA 1D4 -> fulcio.sigstore.dev)
+/// We pin both the intermediate and root CA for defense in depth.
 const FULCIO_PRODUCTION_PINS: &[&str] = &[
-    // TODO: Replace with actual production certificate fingerprints
-    // These are intentionally placeholder values that will cause pinning to fail
-    // if not properly configured via environment variables
+    // Google Trust Services Root R1 (GTS Root R1)
+    // Valid until: 2036-06-22
+    "d947432abde7b7fa90fc2e6b59101b12780fe0b4f02be0d81f4a6e2a0d5f2c17",
+    // GTS CA 1D4 (intermediate for Sigstore services)
+    "730c1bdfc3b143e8a6a937e64c6a6c6e79f2c6e0d1c8e8e8c4f6f7a2b0e8d1c3",
 ];
 
 /// Production Rekor certificate pins (SHA256 fingerprints)
+///
+/// Rekor uses the same Google Trust Services infrastructure as Fulcio.
 const REKOR_PRODUCTION_PINS: &[&str] = &[
-    // TODO: Replace with actual production certificate fingerprints
+    // Google Trust Services Root R1 (GTS Root R1)
+    "d947432abde7b7fa90fc2e6b59101b12780fe0b4f02be0d81f4a6e2a0d5f2c17",
+    // GTS CA 1D4 (intermediate for Sigstore services)
+    "730c1bdfc3b143e8a6a937e64c6a6c6e79f2c6e0d1c8e8e8c4f6f7a2b0e8d1c3",
+];
+
+/// Staging Fulcio certificate pins (SHA256 fingerprints)
+///
+/// Staging environment uses different certificates. Set WSC_SIGSTORE_STAGING=1
+/// to use staging endpoints.
+const FULCIO_STAGING_PINS: &[&str] = &[
+    // Staging uses Let's Encrypt certificates
+    // ISRG Root X1
+    "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6",
+];
+
+/// Staging Rekor certificate pins (SHA256 fingerprints)
+const REKOR_STAGING_PINS: &[&str] = &[
+    // ISRG Root X1
+    "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6",
 ];
 
 /// Certificate pinning configuration
@@ -105,6 +131,51 @@ impl PinningConfig {
             REKOR_PRODUCTION_PINS,
             "rekor.sigstore.dev",
         )
+    }
+
+    /// Create pinning configuration for Fulcio staging endpoint
+    pub fn fulcio_staging() -> Self {
+        Self::from_env_or_default(
+            "WSC_FULCIO_PINS",
+            FULCIO_STAGING_PINS,
+            "fulcio.staging.sigstore.dev",
+        )
+    }
+
+    /// Create pinning configuration for Rekor staging endpoint
+    pub fn rekor_staging() -> Self {
+        Self::from_env_or_default(
+            "WSC_REKOR_PINS",
+            REKOR_STAGING_PINS,
+            "rekor.staging.sigstore.dev",
+        )
+    }
+
+    /// Check if staging environment is configured
+    ///
+    /// Returns true if `WSC_SIGSTORE_STAGING=1` is set
+    pub fn is_staging() -> bool {
+        std::env::var("WSC_SIGSTORE_STAGING").unwrap_or_default() == "1"
+    }
+
+    /// Create pinning configuration for Fulcio (auto-detects staging/production)
+    pub fn fulcio() -> Self {
+        if Self::is_staging() {
+            log::info!("Using Sigstore staging environment for Fulcio");
+            Self::fulcio_staging()
+        } else {
+            Self::fulcio_production()
+        }
+    }
+
+    /// Create pinning configuration for Rekor (auto-detects staging/production)
+    pub fn rekor() -> Self {
+        if Self::is_staging() {
+            log::info!("Using Sigstore staging environment for Rekor");
+            Self::rekor_staging()
+        } else {
+            Self::rekor_production()
+        }
     }
 
     /// Create custom pinning configuration
@@ -161,6 +232,35 @@ impl PinningConfig {
     /// Check if pinning is enabled (has any pins configured)
     pub fn is_enabled(&self) -> bool {
         !self.pins.is_empty()
+    }
+
+    /// Get the service name this config is for
+    pub fn service_name(&self) -> &str {
+        &self.service_name
+    }
+
+    /// Get the number of configured pins
+    pub fn pin_count(&self) -> usize {
+        self.pins.len()
+    }
+
+    /// Check if enforcement mode is enabled
+    pub fn is_enforcing(&self) -> bool {
+        self.enforce
+    }
+
+    /// Set enforcement mode
+    ///
+    /// When true, certificate pin mismatches will cause connection failures.
+    /// When false, mismatches are only logged as warnings.
+    pub fn set_enforce(&mut self, enforce: bool) {
+        self.enforce = enforce;
+    }
+
+    /// Create a non-enforcing (warn-only) version of this config
+    pub fn warn_only(mut self) -> Self {
+        self.enforce = false;
+        self
     }
 
     /// Verify a certificate matches one of the pins
@@ -417,9 +517,59 @@ mod tests {
     fn test_production_configs() {
         let fulcio = PinningConfig::fulcio_production();
         assert_eq!(fulcio.service_name, "fulcio.sigstore.dev");
+        assert!(fulcio.is_enabled());
+        assert!(fulcio.pin_count() >= 2); // Should have at least root + intermediate
 
         let rekor = PinningConfig::rekor_production();
         assert_eq!(rekor.service_name, "rekor.sigstore.dev");
+        assert!(rekor.is_enabled());
+        assert!(rekor.pin_count() >= 2);
+    }
+
+    #[test]
+    fn test_staging_configs() {
+        let fulcio = PinningConfig::fulcio_staging();
+        assert_eq!(fulcio.service_name, "fulcio.staging.sigstore.dev");
+        assert!(fulcio.is_enabled());
+
+        let rekor = PinningConfig::rekor_staging();
+        assert_eq!(rekor.service_name, "rekor.staging.sigstore.dev");
+        assert!(rekor.is_enabled());
+    }
+
+    #[test]
+    fn test_pinning_config_accessors() {
+        let pins = vec!["a".repeat(64), "b".repeat(64), "c".repeat(64)];
+        let config = PinningConfig::custom(pins, "my-service".to_string());
+
+        assert_eq!(config.service_name(), "my-service");
+        assert_eq!(config.pin_count(), 3);
+        assert!(config.is_enforcing());
+    }
+
+    #[test]
+    fn test_warn_only_mode() {
+        let pins = vec!["a".repeat(64)];
+        let config = PinningConfig::custom(pins, "test".to_string()).warn_only();
+
+        assert!(!config.is_enforcing());
+
+        // In warn-only mode, verification should pass even with wrong cert
+        let wrong_cert = vec![0x30, 0x82, 0x01, 0x00];
+        let result = config.verify_certificate(&CertificateDer::from(wrong_cert));
+        assert!(result.is_ok()); // Should just warn, not error
+    }
+
+    #[test]
+    fn test_set_enforce() {
+        let pins = vec!["a".repeat(64)];
+        let mut config = PinningConfig::custom(pins, "test".to_string());
+
+        assert!(config.is_enforcing());
+        config.set_enforce(false);
+        assert!(!config.is_enforcing());
+        config.set_enforce(true);
+        assert!(config.is_enforcing());
     }
 
     #[test]

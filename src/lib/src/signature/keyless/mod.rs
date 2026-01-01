@@ -1,3 +1,6 @@
+/// Certificate pinning for Sigstore endpoints (Issue #12)
+///
+/// Provides defense-in-depth against CA compromise and MITM attacks.
 pub mod cert_pinning;
 pub mod cert_verifier;
 /// Keyless signing support for wsc
@@ -14,6 +17,8 @@ pub mod rekor;
 pub mod rekor_verifier;
 pub mod signer;
 
+// Certificate pinning types (Issue #12)
+pub use cert_pinning::{PinningConfig, PinnedCertVerifier, check_pinning_enforcement};
 pub use cert_verifier::{CertVerificationError, CertificatePool};
 pub use format::*;
 pub use fulcio::{FulcioCertificate, FulcioClient};
