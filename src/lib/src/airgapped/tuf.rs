@@ -145,13 +145,14 @@ pub struct TimestampAuthorityEntry {
 }
 
 /// Fetch and parse the Sigstore trusted root
-#[cfg(not(target_os = "wasi"))]
+///
+/// Note: In WASI targets, network access requires Wasmtime to be configured
+/// with socket capabilities (e.g., `wasmtime --wasi=network=127.0.0.1`).
 pub fn fetch_sigstore_trusted_root() -> Result<SigstoreTrustedRoot, WSError> {
     fetch_sigstore_trusted_root_from_url(SIGSTORE_TRUSTED_ROOT_URL)
 }
 
 /// Fetch and parse trusted root from a custom URL
-#[cfg(not(target_os = "wasi"))]
 pub fn fetch_sigstore_trusted_root_from_url(url: &str) -> Result<SigstoreTrustedRoot, WSError> {
     let response = ureq::get(url)
         .call()
