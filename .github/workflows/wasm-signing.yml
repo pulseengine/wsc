@@ -49,7 +49,7 @@ jobs:
         # cargo install wsc-cli --version ${{ env.WSC_VERSION }}
 
         # Or build from source
-        cargo install --git https://github.com/aspect-build/wsc.git wsc-cli
+        cargo install --git https://github.com/pulseengine/wsc.git wsc-cli
 
     - name: Build WASM module
       run: |
