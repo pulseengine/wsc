@@ -1,4 +1,5 @@
 mod hash;
+mod info;
 pub mod keyless;
 mod keys;
 mod matrix;
@@ -6,6 +7,7 @@ mod multi;
 mod sig_sections;
 mod simple;
 
+pub use info::*;
 pub use keys::*;
 pub use matrix::*;
 

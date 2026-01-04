@@ -2,12 +2,11 @@ pub use crate::error::*;
 use crate::secure_file;
 
 use ct_codecs::{Encoder, Hex};
-use ssh_keys::{self, openssh};
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, prelude::*};
 use std::path::Path;
-use std::{fmt, str};
+use std::fmt;
 
 pub(crate) const ED25519_PK_ID: u8 = 0x01;
 pub(crate) const ED25519_SK_ID: u8 = 0x81;
@@ -78,55 +77,6 @@ impl PublicKey {
         let mut fp = File::create(file)?;
         fp.write_all(&self.to_bytes())?;
         Ok(())
-    }
-
-    /// Parse a single OpenSSH public key.
-    pub fn from_openssh(lines: &str) -> Result<Self, WSError> {
-        for line in lines.lines() {
-            let line = line.trim();
-            if let Ok(ssh_keys::PublicKey::Ed25519(raw)) = openssh::parse_public_key(line) {
-                let mut bytes = vec![ED25519_PK_ID];
-                bytes.extend_from_slice(&raw);
-                if let Ok(pk) = PublicKey::from_bytes(&bytes) {
-                    return Ok(pk);
-                }
-            };
-        }
-        Err(WSError::ParseError)
-    }
-
-    /// Parse a single OpenSSH public key from a file.
-    pub fn from_openssh_file(file: impl AsRef<Path>) -> Result<Self, WSError> {
-        let mut fp = File::open(file)?;
-        let mut lines = String::new();
-        fp.read_to_string(&mut lines)?;
-        Self::from_openssh(&lines)
-    }
-
-    /// Try to guess the public key format.
-    pub fn from_any(data: &[u8]) -> Result<Self, WSError> {
-        if let Ok(pk) = Self::from_bytes(data) {
-            return Ok(pk);
-        }
-        if let Ok(pk) = Self::from_der(data) {
-            return Ok(pk);
-        }
-        let s = str::from_utf8(data).map_err(|_| WSError::ParseError)?;
-        if let Ok(pk) = Self::from_pem(s) {
-            return Ok(pk);
-        }
-        if let Ok(pk) = Self::from_openssh(s) {
-            return Ok(pk);
-        }
-        Err(WSError::ParseError)
-    }
-
-    /// Load a key from a file, trying to guess its format.
-    pub fn from_any_file(file: impl AsRef<Path>) -> Result<Self, WSError> {
-        let mut fp = File::open(file)?;
-        let mut bytes = vec![];
-        fp.read_to_end(&mut bytes)?;
-        Self::from_any(&bytes)
     }
 
     /// Return the key identifier associated with this public key, if there is one.
@@ -232,26 +182,6 @@ impl SecretKey {
     pub fn to_file(&self, file: impl AsRef<Path>) -> Result<(), WSError> {
         secure_file::write_secure(file.as_ref(), &self.to_bytes())
     }
-
-    /// Parse an OpenSSH secret key.
-    pub fn from_openssh(lines: &str) -> Result<Self, WSError> {
-        for sk in openssh::parse_private_key(lines).map_err(|_| WSError::ParseError)? {
-            if let ssh_keys::PrivateKey::Ed25519(raw) = sk {
-                let mut bytes = vec![ED25519_SK_ID];
-                bytes.extend_from_slice(&raw);
-                return Self::from_bytes(&bytes);
-            }
-        }
-        Err(WSError::UnsupportedKeyType)
-    }
-
-    /// Read an OpenSSH key from a file.
-    pub fn from_openssh_file(file: impl AsRef<Path>) -> Result<Self, WSError> {
-        let mut fp = File::open(file)?;
-        let mut lines = String::new();
-        fp.read_to_string(&mut lines)?;
-        Self::from_openssh(&lines)
-    }
 }
 
 impl fmt::Debug for SecretKey {
@@ -304,30 +234,6 @@ impl PublicKeySet {
         PublicKeySet { pks }
     }
 
-    /// Parse an OpenSSH public key set.
-    pub fn from_openssh(lines: &str) -> Result<Self, WSError> {
-        let mut pks = PublicKeySet::empty();
-        for line in lines.lines() {
-            let line = line.trim();
-            if let Ok(ssh_keys::PublicKey::Ed25519(raw)) = openssh::parse_public_key(line) {
-                let mut bytes = vec![ED25519_PK_ID];
-                bytes.extend_from_slice(&raw);
-                if let Ok(pk) = PublicKey::from_bytes(&bytes) {
-                    pks.pks.insert(pk);
-                }
-            };
-        }
-        Ok(pks)
-    }
-
-    /// Parse an OpenSSH public key set from a file.
-    pub fn from_openssh_file(file: impl AsRef<Path>) -> Result<Self, WSError> {
-        let mut fp = File::open(file)?;
-        let mut lines = String::new();
-        fp.read_to_string(&mut lines)?;
-        Self::from_openssh(&lines)
-    }
-
     /// Return the number of keys in the set.
     pub fn len(&self) -> usize {
         self.pks.len()
@@ -344,26 +250,6 @@ impl PublicKeySet {
             return Err(WSError::DuplicatePublicKey);
         }
         Ok(())
-    }
-
-    /// Parse and add a key to the set, trying to guess its format.
-    pub fn insert_any(&mut self, data: &[u8]) -> Result<(), WSError> {
-        if let Ok(s) = str::from_utf8(data)
-            && let Ok(pk) = PublicKey::from_openssh(s)
-        {
-            self.insert(pk)?;
-            return Ok(());
-        }
-        let pk = PublicKey::from_any(data)?;
-        self.insert(pk)
-    }
-
-    /// Load, parse and add a key to the set, trying to guess its format.
-    pub fn insert_any_file(&mut self, file: impl AsRef<Path>) -> Result<(), WSError> {
-        let mut fp = File::open(file)?;
-        let mut data = vec![];
-        fp.read_to_end(&mut data)?;
-        self.insert_any(&data)
     }
 
     /// Merge another public key set into this one.
@@ -458,37 +344,6 @@ mod tests {
 
         let pk2 = PublicKey::from_der(&der).unwrap();
         assert_eq!(pk2.pk.as_ref(), kp.pk.pk.as_ref());
-    }
-
-    #[test]
-    fn test_public_key_from_any_bytes() {
-        let kp = create_test_keypair();
-        let bytes = kp.pk.to_bytes();
-        let pk = PublicKey::from_any(&bytes).unwrap();
-        assert_eq!(pk.pk.as_ref(), kp.pk.pk.as_ref());
-    }
-
-    #[test]
-    fn test_public_key_from_any_der() {
-        let kp = create_test_keypair();
-        let der = kp.pk.to_der();
-        let pk = PublicKey::from_any(&der).unwrap();
-        assert_eq!(pk.pk.as_ref(), kp.pk.pk.as_ref());
-    }
-
-    #[test]
-    fn test_public_key_from_any_pem() {
-        let kp = create_test_keypair();
-        let pem = kp.pk.to_pem();
-        let pk = PublicKey::from_any(pem.as_bytes()).unwrap();
-        assert_eq!(pk.pk.as_ref(), kp.pk.pk.as_ref());
-    }
-
-    #[test]
-    fn test_public_key_from_any_invalid() {
-        let invalid_data = b"not a valid key";
-        let result = PublicKey::from_any(invalid_data);
-        assert!(result.is_err());
     }
 
     #[test]
@@ -597,16 +452,6 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), WSError::DuplicatePublicKey));
         assert_eq!(set.len(), 1); // Still only one key
-    }
-
-    #[test]
-    fn test_public_key_set_insert_any() {
-        let mut set = PublicKeySet::empty();
-        let kp = create_test_keypair();
-        let bytes = kp.pk.to_bytes();
-
-        set.insert_any(&bytes).unwrap();
-        assert_eq!(set.len(), 1);
     }
 
     #[test]
@@ -764,43 +609,6 @@ mod tests {
     }
 
     #[test]
-    fn test_public_key_from_any_file() {
-        let kp = create_test_keypair();
-        let temp_file = std::env::temp_dir().join("test_pk_any.key");
-
-        // Write PEM format
-        std::fs::write(&temp_file, kp.pk.to_pem()).unwrap();
-
-        // Read with from_any_file
-        let pk2 = PublicKey::from_any_file(&temp_file).unwrap();
-        assert_eq!(pk2.pk.as_ref(), kp.pk.pk.as_ref());
-
-        // Clean up
-        std::fs::remove_file(temp_file).ok();
-    }
-
-    #[test]
-    fn test_public_key_set_from_openssh() {
-        // Just test that it can parse an empty string without crashing
-        let result = PublicKeySet::from_openssh("");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().len(), 0);
-    }
-
-    #[test]
-    fn test_public_key_from_openssh_invalid() {
-        let result = PublicKey::from_openssh("invalid ssh key data");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_public_key_set_insert_any_invalid() {
-        let mut set = PublicKeySet::empty();
-        let result = set.insert_any(b"invalid key data");
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn test_public_key_hash() {
         let kp = create_test_keypair();
         let mut set = std::collections::HashSet::new();
@@ -822,34 +630,6 @@ mod tests {
         let mut set = std::collections::HashSet::new();
         set.insert(kp1.clone());
         assert!(set.contains(&kp1));
-    }
-
-    #[test]
-    fn test_public_key_set_from_openssh_file_missing() {
-        let temp_file = std::env::temp_dir().join("nonexistent_openssh.key");
-        let result = PublicKeySet::from_openssh_file(&temp_file);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_public_key_from_openssh_file_missing() {
-        let temp_file = std::env::temp_dir().join("nonexistent_pk.key");
-        let result = PublicKey::from_openssh_file(&temp_file);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_secret_key_from_openssh_invalid() {
-        let result = SecretKey::from_openssh("invalid data");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_public_key_set_insert_any_file_missing() {
-        let mut set = PublicKeySet::empty();
-        let temp_file = std::env::temp_dir().join("nonexistent_any.key");
-        let result = set.insert_any_file(&temp_file);
-        assert!(result.is_err());
     }
 
     // ============================================================================
