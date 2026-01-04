@@ -4,6 +4,7 @@ use wsc::airgapped::{
     TRUST_BUNDLE_FORMAT_VERSION,
     fetch_sigstore_trusted_root, trusted_root_to_bundle, SIGSTORE_TRUSTED_ROOT_URL,
 };
+use wsc::audit::{self, AuditConfig, LogDestination};
 
 use wsc::reexports::log;
 
@@ -54,6 +55,18 @@ fn start() -> Result<(), WSError> {
                 .short('d')
                 .action(ArgAction::SetTrue)
                 .help("Prints debugging information"),
+        )
+        .arg(
+            Arg::new("audit")
+                .long("audit")
+                .action(ArgAction::SetTrue)
+                .help("Enable structured audit logging (JSON to stderr)"),
+        )
+        .arg(
+            Arg::new("audit-file")
+                .long("audit-file")
+                .value_name("FILE")
+                .help("Write audit logs to FILE instead of stderr"),
         )
         .subcommand(
             Command::new("keygen")
@@ -153,14 +166,7 @@ fn start() -> Result<(), WSError> {
                         .value_name("public_key_file")
                         .long("public-key")
                         .short('K')
-                        .help("Public key file"),
-                )
-                .arg(
-                    Arg::new("ssh")
-                        .long("ssh")
-                        .short('Z')
-                        .action(ArgAction::SetTrue)
-                        .help("Parse OpenSSH keys"),
+                        .help("Public key file (PEM or DER format)"),
                 )
                 .arg(
                     Arg::new("signature_file")
@@ -185,7 +191,7 @@ fn start() -> Result<(), WSError> {
                     Arg::new("keyless")
                         .long("keyless")
                         .action(ArgAction::SetTrue)
-                        .conflicts_with_all(["public_key", "from_github", "ssh", "signature_file", "splits"])
+                        .conflicts_with_all(["public_key", "signature_file", "splits"])
                         .help("Verify keyless signature (Sigstore/Fulcio/Rekor)"),
                 )
                 .arg(
@@ -208,22 +214,7 @@ fn start() -> Result<(), WSError> {
                         .long("public-key")
                         .short('K')
                         .required(false)
-                        .help("Public key file"),
-                )
-                .arg(
-                    Arg::new("from_github")
-                        .value_name("from_github")
-                        .long("from-github")
-                        .short('G')
-                        .required(false)
-                        .help("GitHub account to retrieve public keys from"),
-                )
-                .arg(
-                    Arg::new("ssh")
-                        .long("ssh")
-                        .short('Z')
-                        .action(ArgAction::SetTrue)
-                        .help("Parse OpenSSH keys"),
+                        .help("Public key file (PEM or DER format)"),
                 )
                 .arg(
                     Arg::new("signature_file")
@@ -314,22 +305,7 @@ fn start() -> Result<(), WSError> {
                         .short('K')
                         .num_args(1..)
                         .required(false)
-                        .help("Public key files"),
-                )
-                .arg(
-                    Arg::new("from_github")
-                        .value_name("from_github")
-                        .long("from-github")
-                        .short('G')
-                        .required(false)
-                        .help("GitHub account to retrieve public keys from"),
-                )
-                .arg(
-                    Arg::new("ssh")
-                        .long("ssh")
-                        .short('Z')
-                        .action(ArgAction::SetTrue)
-                        .help("Parse OpenSSH keys"),
+                        .help("Public key files (PEM or DER format)"),
                 )
                 .arg(
                     Arg::new("splits")
@@ -480,6 +456,8 @@ fn start() -> Result<(), WSError> {
 
     let verbose = matches.get_flag("verbose");
     let debug = matches.get_flag("debug");
+    let audit_enabled = matches.get_flag("audit");
+    let audit_file = matches.get_one::<String>("audit-file").map(|s| s.as_str());
 
     env_logger::builder()
         .format_timestamp(None)
@@ -492,6 +470,21 @@ fn start() -> Result<(), WSError> {
             log::LevelFilter::Info
         })
         .init();
+
+    // Initialize audit logging if enabled
+    if audit_enabled || audit_file.is_some() {
+        let destination = match audit_file {
+            Some(path) => LogDestination::File(path.to_string()),
+            None => LogDestination::Stderr,
+        };
+        audit::init(AuditConfig {
+            enabled: true,
+            destination,
+            json_format: true,
+            redact_pii: true,
+            filter: "wsc::audit=info".to_string(),
+        });
+    }
 
     if let Some(matches) = matches.subcommand_matches("show") {
         let input_file = matches.get_one::<String>("in").map(|s| s.as_str());
@@ -583,17 +576,10 @@ fn start() -> Result<(), WSError> {
                 .get_one::<String>("secret_key")
                 .map(|s| s.as_str())
                 .ok_or(WSError::UsageError("Missing secret key file"))?;
-            let sk = match matches.get_flag("ssh") {
-                false => SecretKey::from_file(sk_file)?,
-                true => SecretKey::from_openssh_file(sk_file)?,
-            };
+            let sk = SecretKey::from_file(sk_file)?;
             let pk_file = matches.get_one::<String>("public_key").map(|s| s.as_str());
             let key_id = if let Some(pk_file) = pk_file {
-                let pk = match matches.get_flag("ssh") {
-                    false => PublicKey::from_file(pk_file)?,
-                    true => PublicKey::from_openssh_file(pk_file)?,
-                }
-                .attach_default_key_id();
+                let pk = PublicKey::from_file(pk_file)?.attach_default_key_id();
                 pk.key_id().cloned()
             } else {
                 None
@@ -652,21 +638,11 @@ fn start() -> Result<(), WSError> {
                         .map_err(|_| WSError::InvalidArgument)?,
                 ),
             };
-            let pk = if let Some(github_account) =
-                matches.get_one::<String>("from_github").map(|s| s.as_str())
-            {
-                PublicKey::from_openssh(&get_pks_from_github(github_account)?)?
-            } else {
-                let pk_file = matches
-                    .get_one::<String>("public_key")
-                    .map(|s| s.as_str())
-                    .ok_or(WSError::UsageError("Missing public key file"))?;
-                match matches.get_flag("ssh") {
-                    false => PublicKey::from_file(pk_file)?,
-                    true => PublicKey::from_openssh_file(pk_file)?,
-                }
-            }
-            .attach_default_key_id();
+            let pk_file = matches
+                .get_one::<String>("public_key")
+                .map(|s| s.as_str())
+                .ok_or(WSError::UsageError("Missing public key file"))?;
+            let pk = PublicKey::from_file(pk_file)?.attach_default_key_id();
             let mut detached_signatures_ = vec![];
             let detached_signatures = match signature_file {
                 None => None,
@@ -739,32 +715,15 @@ fn start() -> Result<(), WSError> {
                     .map_err(|_| WSError::InvalidArgument)?,
             ),
         };
-        let pks = if let Some(github_account) =
-            matches.get_one::<String>("from_github").map(|s| s.as_str())
-        {
-            PublicKeySet::from_openssh(&get_pks_from_github(github_account)?)?
-        } else {
-            let pk_files = matches
-                .get_many::<String>("public_keys")
-                .ok_or(WSError::UsageError("Missing public key files"))?;
-            match matches.get_flag("ssh") {
-                false => {
-                    let mut pks = std::collections::HashSet::new();
-                    for pk_file in pk_files {
-                        let pk = PublicKey::from_file(pk_file)?;
-                        pks.insert(pk);
-                    }
-                    PublicKeySet::new(pks)
-                }
-                true => PublicKeySet::from_openssh_file(
-                    pk_files
-                        .into_iter()
-                        .next()
-                        .ok_or(WSError::UsageError("Missing public keys file"))?,
-                )?,
-            }
+        let pk_files = matches
+            .get_many::<String>("public_keys")
+            .ok_or(WSError::UsageError("Missing public key files"))?;
+        let mut pks_set = std::collections::HashSet::new();
+        for pk_file in pk_files {
+            let pk = PublicKey::from_file(pk_file)?;
+            pks_set.insert(pk);
         }
-        .attach_default_key_id();
+        let pks = PublicKeySet::new(pks_set).attach_default_key_id();
         let input_file = input_file.ok_or(WSError::UsageError("Missing input file"))?;
         let mut detached_signatures_ = vec![];
         let detached_signatures = match signature_file {
@@ -1145,88 +1104,6 @@ fn chrono_format(timestamp: u64) -> String {
     let month = remaining_days / 30 + 1;
     let day = remaining_days % 30 + 1;
     format!("{:04}-{:02}-{:02}", year, month.min(12), day.min(31))
-}
-
-// Native builds: Use ureq HTTP client
-#[cfg(not(target_os = "wasi"))]
-fn get_pks_from_github(account: impl AsRef<str>) -> Result<String, WSError> {
-    let account_rawurlencoded = uri_encode::encode_uri_component(account.as_ref());
-    let url = format!("https://github.com/{account_rawurlencoded}.keys");
-    let response = ureq::get(&url)
-        .call()
-        .map_err(|_| WSError::UsageError("Keys couldn't be retrieved from GitHub"))?;
-    let s = response
-        .into_body()
-        .read_to_vec()
-        .map_err(|_| WSError::UsageError("Keys couldn't be retrieved from GitHub"))?;
-    String::from_utf8(s).map_err(|_| {
-        WSError::UsageError("Unexpected characters in the public keys retrieved from GitHub")
-    })
-}
-
-// WASI builds: Use wasi::http outgoing-handler
-#[cfg(target_os = "wasi")]
-fn get_pks_from_github(account: impl AsRef<str>) -> Result<String, WSError> {
-    use wasi::http::outgoing_handler;
-    use wasi::http::types::{Fields, Method, OutgoingRequest, Scheme};
-
-    // Construct the URL for GitHub keys API
-    let account_encoded = account.as_ref().replace('/', "%2F");
-
-    // Parse URL components
-    let authority = "github.com";
-    let path = format!("/{}.keys", account_encoded);
-
-    // Create outgoing request
-    let headers = Fields::new();
-    let request = OutgoingRequest::new(headers);
-    request
-        .set_method(&Method::Get)
-        .map_err(|_| WSError::UsageError("Failed to set HTTP method"))?;
-    request
-        .set_scheme(Some(&Scheme::Https))
-        .map_err(|_| WSError::UsageError("Failed to set HTTPS scheme"))?;
-    request
-        .set_authority(Some(authority))
-        .map_err(|_| WSError::UsageError("Failed to set authority"))?;
-    request
-        .set_path_with_query(Some(&path))
-        .map_err(|_| WSError::UsageError("Failed to set path"))?;
-
-    // Send request
-    let future_response = outgoing_handler::handle(request, None)
-        .map_err(|_| WSError::UsageError("Failed to send HTTP request"))?;
-
-    // Wait for response
-    let incoming_response = future_response
-        .get()
-        .ok_or_else(|| WSError::UsageError("HTTP request not ready"))?
-        .map_err(|_| WSError::UsageError("Keys couldn't be retrieved from GitHub"))??;
-
-    // Read response body
-    let body = incoming_response
-        .consume()
-        .map_err(|_| WSError::UsageError("Failed to get response body"))?;
-
-    let mut bytes = Vec::new();
-    let stream = body
-        .stream()
-        .map_err(|_| WSError::UsageError("Failed to get body stream"))?;
-
-    loop {
-        let chunk = stream
-            .blocking_read(8192)
-            .map_err(|_| WSError::UsageError("Failed to read from stream"))?;
-
-        if chunk.is_empty() {
-            break;
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-
-    String::from_utf8(bytes).map_err(|_| {
-        WSError::UsageError("Unexpected characters in the public keys retrieved from GitHub")
-    })
 }
 
 fn main() -> Result<(), WSError> {

@@ -11,7 +11,7 @@ use super::{
     FulcioClient, KeylessSignature, OidcProvider, RekorClient, RekorEntry, RekorKeyring,
     detect_oidc_provider,
 };
-use crate::{Module, WSError, SectionLike};
+use crate::{Module, WSError, SectionLike, audit};
 use ecdsa::SigningKey;
 use p256::ecdsa::Signature;
 use sha2::{Digest, Sha256};
@@ -196,6 +196,9 @@ impl KeylessSigner {
     pub fn sign_module(&self, module: Module) -> Result<(Module, KeylessSignature), WSError> {
         log::info!("Starting keyless signing process");
 
+        // Generate correlation ID for audit trail
+        let correlation_id = audit::new_correlation_id();
+
         // Step 1: Generate ephemeral keypair
         // SECURITY: Ephemeral key zeroization (addresses Issue #14)
         //
@@ -261,6 +264,14 @@ impl KeylessSigner {
 
         // Also get the hash value for Rekor upload
         let module_hash = module_hasher.finalize();
+        let artifact_hash = format!("sha256:{}", hex::encode(&module_hash));
+
+        // Log signing attempt (we now have identity and artifact hash)
+        audit::log_signing_attempt(
+            &correlation_id,
+            &artifact_hash,
+            Some(&oidc_token.identity),
+        );
 
         // Step 7: Upload to Rekor (if not skipped)
         let rekor_entry = if self.config.skip_rekor {
@@ -300,6 +311,15 @@ impl KeylessSigner {
         // Step 9: Embed signature in module
         log::debug!("Embedding signature in module");
         let signed_module = self.embed_signature(module, &keyless_sig)?;
+
+        // Log signing success
+        audit::log_signing_success(
+            &correlation_id,
+            &artifact_hash,
+            Some(&oidc_token.identity),
+            Some(&keyless_sig.rekor_entry.uuid),
+            None, // certificate fingerprint (TODO: extract from cert)
+        );
 
         log::info!("Keyless signing completed successfully");
         Ok((signed_module, keyless_sig))
@@ -392,9 +412,21 @@ impl KeylessVerifier {
     ) -> Result<KeylessVerificationResult, WSError> {
         log::info!("Starting keyless signature verification");
 
+        // Generate correlation ID for audit trail
+        let correlation_id = audit::new_correlation_id();
+
         // Step 1: Extract signature from module
         log::debug!("Extracting keyless signature from module");
         let keyless_sig = Self::extract_signature(module)?;
+
+        // Compute artifact hash for audit logging
+        let mut module_bytes = Vec::new();
+        module.serialize(&mut module_bytes).ok();
+        let module_hash = Sha256::digest(&module_bytes);
+        let artifact_hash = format!("sha256:{}", hex::encode(&module_hash));
+
+        // Log verification attempt
+        audit::log_verification_attempt(&correlation_id, &artifact_hash);
 
         // Step 2: Verify certificate chain
         log::debug!("Verifying certificate chain against Fulcio roots");
@@ -436,6 +468,14 @@ impl KeylessVerifier {
             }
             log::info!("Issuer verified: {}", issuer);
         }
+
+        // Log verification success
+        audit::log_verification_success(
+            &correlation_id,
+            &artifact_hash,
+            Some(&identity),
+            1, // signature count
+        );
 
         log::info!("Keyless verification completed successfully");
 

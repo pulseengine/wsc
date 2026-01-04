@@ -51,6 +51,13 @@ pub mod composition;
 /// edge devices without network access at runtime.
 pub mod airgapped;
 
+/// Audit logging for security-sensitive operations
+///
+/// Provides structured audit logging for signing and verification operations,
+/// designed for compliance with ISO/SAE 21434, IEC 62443, and SOC 2 requirements.
+/// Supports JSON output for SIEM integration.
+pub mod audit;
+
 #[allow(unused_imports)]
 pub use error::*;
 #[allow(unused_imports)]

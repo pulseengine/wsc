@@ -18,9 +18,11 @@ ed25519-compact = { version = "2.1.1", features = ["pem"] }
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
 hmac-sha256 = "1.1.12"
 log = "0.4.28"
+# Structured audit logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 sha2 = "0.10"
 regex = "1.12.2"
-ssh-keys = "0.1.4"
 thiserror = "2.0.17"
 # Security: zeroize sensitive data on drop
 zeroize = { version = "1.8", features = ["derive"] }
