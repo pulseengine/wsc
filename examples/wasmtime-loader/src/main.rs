@@ -124,16 +124,16 @@ fn main() -> Result<()> {
     log::info!("Loading trusted keys");
     let mut keys = PublicKeySet::empty();
 
-    // Try to load keys from keys/ directory
-    let key_path = Path::new("examples/wasmtime-loader/keys/trusted.pub");
+    // Try to load keys from keys/ directory (PEM format)
+    let key_path = Path::new("examples/wasmtime-loader/keys/trusted.pem");
     if key_path.exists() {
-        keys.insert_any_file(key_path)
+        keys.insert_pem_file(key_path)
             .with_context(|| format!("Failed to load key: {}", key_path.display()))?;
         log::info!("Loaded {} trusted key(s)", keys.items().len());
     } else {
         log::warn!("No trusted keys found at: {}", key_path.display());
         log::warn!("All signature verifications will fail in strict mode");
-        log::warn!("Generate keys with: cargo run --bin wsc -- generate-key");
+        log::warn!("Generate keys with: cargo run --bin wsc -- generate-key --pem");
     }
 
     // Configure Wasmtime
@@ -196,8 +196,8 @@ EXAMPLES:
     cargo run --release -- --no-verify components/hello.wasm
 
 TRUST CONFIGURATION:
-    Place trusted public keys in: examples/wasmtime-loader/keys/trusted.pub
-    Generate keys with: cargo run --bin wsc -- generate-key
+    Place trusted public keys in: examples/wasmtime-loader/keys/trusted.pem (PEM format)
+    Generate keys with: cargo run --bin wsc -- generate-key --pem
 
 SEE ALSO:
     https://github.com/pulseengine/wsc - WSC signature toolkit

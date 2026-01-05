@@ -64,12 +64,24 @@ impl PublicKey {
         self.pk.to_der()
     }
 
-    /// Read public key from a file.
+    /// Read public key from a file (raw WSC format).
     pub fn from_file(file: impl AsRef<Path>) -> Result<Self, WSError> {
         let mut fp = File::open(file)?;
         let mut bytes = vec![];
         fp.read_to_end(&mut bytes)?;
         Self::from_bytes(&bytes)
+    }
+
+    /// Read public key from a PEM file.
+    pub fn from_pem_file(file: impl AsRef<Path>) -> Result<Self, WSError> {
+        let content = std::fs::read_to_string(file)?;
+        Self::from_pem(&content)
+    }
+
+    /// Read public key from a DER file.
+    pub fn from_der_file(file: impl AsRef<Path>) -> Result<Self, WSError> {
+        let bytes = std::fs::read(file)?;
+        Self::from_der(&bytes)
     }
 
     /// Save the public key to a file.
@@ -250,6 +262,18 @@ impl PublicKeySet {
             return Err(WSError::DuplicatePublicKey);
         }
         Ok(())
+    }
+
+    /// Load a public key from a PEM file and add it to the set.
+    pub fn insert_pem_file(&mut self, file: impl AsRef<Path>) -> Result<(), WSError> {
+        let pk = PublicKey::from_pem_file(file)?;
+        self.insert(pk)
+    }
+
+    /// Load a public key from a raw WSC format file and add it to the set.
+    pub fn insert_file(&mut self, file: impl AsRef<Path>) -> Result<(), WSError> {
+        let pk = PublicKey::from_file(file)?;
+        self.insert(pk)
     }
 
     /// Merge another public key set into this one.
