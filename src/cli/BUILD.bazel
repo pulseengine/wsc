@@ -34,7 +34,6 @@ rust_binary(
         "@wsc_deps//:env_logger",
         "@wsc_deps//:regex",
         "@wsc_deps//:ureq-3.1.2",
-        "@wsc_deps//:uri_encode",
         "@wsc_deps//:wasi",
     ],
     # No feature flags needed - HTTP client selected via #[cfg(target_os = "wasi")]
