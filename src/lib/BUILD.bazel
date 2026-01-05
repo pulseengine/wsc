@@ -22,8 +22,9 @@ rust_library(
         "@wsc_deps//:log",
         "@wsc_deps//:regex",
         "@wsc_deps//:sha2",
-        "@wsc_deps//:ssh-keys",
         "@wsc_deps//:thiserror",
+        "@wsc_deps//:tracing",
+        "@wsc_deps//:tracing-subscriber",
         "@wsc_deps//:wasi",
         # Keyless signing dependencies (common to all targets)
         "@wsc_deps//:base64",
