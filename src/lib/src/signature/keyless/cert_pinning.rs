@@ -70,10 +70,11 @@ use std::sync::Arc;
 /// Sigstore uses Google Trust Services certificates (GTS Root R1 -> GTS CA 1D4 -> fulcio.sigstore.dev)
 /// We pin both the intermediate and root CA for defense in depth.
 const FULCIO_PRODUCTION_PINS: &[&str] = &[
-    // Google Trust Services Root R1 (GTS Root R1)
-    // Valid until: 2036-06-22
+    // Current fulcio.sigstore.dev leaf certificate (updated 2026-01-05)
+    // Run: echo | openssl s_client -connect fulcio.sigstore.dev:443 -servername fulcio.sigstore.dev 2>/dev/null | openssl x509 -outform DER | sha256sum
+    "b856b7083ffae1147d0358ab4a21838657d226169e7e3b2de212c92a6830530a",
+    // Previous pins kept for rotation grace period
     "d947432abde7b7fa90fc2e6b59101b12780fe0b4f02be0d81f4a6e2a0d5f2c17",
-    // GTS CA 1D4 (intermediate for Sigstore services)
     "730c1bdfc3b143e8a6a937e64c6a6c6e79f2c6e0d1c8e8e8c4f6f7a2b0e8d1c3",
 ];
 
@@ -81,9 +82,11 @@ const FULCIO_PRODUCTION_PINS: &[&str] = &[
 ///
 /// Rekor uses the same Google Trust Services infrastructure as Fulcio.
 const REKOR_PRODUCTION_PINS: &[&str] = &[
-    // Google Trust Services Root R1 (GTS Root R1)
+    // Current rekor.sigstore.dev leaf certificate (updated 2026-01-05)
+    // Run: echo | openssl s_client -connect rekor.sigstore.dev:443 -servername rekor.sigstore.dev 2>/dev/null | openssl x509 -outform DER | sha256sum
+    "1d1d8295591c131c4e3581c8bdaa6ee0a76baae16f454467069cd1211756b88d",
+    // Previous pins kept for rotation grace period
     "d947432abde7b7fa90fc2e6b59101b12780fe0b4f02be0d81f4a6e2a0d5f2c17",
-    // GTS CA 1D4 (intermediate for Sigstore services)
     "730c1bdfc3b143e8a6a937e64c6a6c6e79f2c6e0d1c8e8e8c4f6f7a2b0e8d1c3",
 ];
 
@@ -518,12 +521,12 @@ mod tests {
         let fulcio = PinningConfig::fulcio_production();
         assert_eq!(fulcio.service_name, "fulcio.sigstore.dev");
         assert!(fulcio.is_enabled());
-        assert!(fulcio.pin_count() >= 2); // Should have at least root + intermediate
+        assert!(fulcio.pin_count() >= 3); // Current leaf + previous pins for rotation
 
         let rekor = PinningConfig::rekor_production();
         assert_eq!(rekor.service_name, "rekor.sigstore.dev");
         assert!(rekor.is_enabled());
-        assert!(rekor.pin_count() >= 2);
+        assert!(rekor.pin_count() >= 3);
     }
 
     #[test]
