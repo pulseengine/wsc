@@ -98,16 +98,28 @@ impl Guest for Component {
     }
 
     fn parse_public_key(key_bytes: Vec<u8>) -> Result<Vec<u8>, String> {
-        // Try to parse as any supported format
-        let pk = PublicKey::from_any(&key_bytes)
-            .map_err(|e| format!("Failed to parse public key: {}", e))?;
-
-        Ok(pk.to_bytes())
+        // Try explicit formats (no auto-detection per security policy)
+        // Try raw WSC bytes first
+        if let Ok(pk) = PublicKey::from_bytes(&key_bytes) {
+            return Ok(pk.to_bytes());
+        }
+        // Try DER
+        if let Ok(pk) = PublicKey::from_der(&key_bytes) {
+            return Ok(pk.to_bytes());
+        }
+        // Try PEM (text format)
+        if let Ok(s) = std::str::from_utf8(&key_bytes) {
+            if let Ok(pk) = PublicKey::from_pem(s) {
+                return Ok(pk.to_bytes());
+            }
+        }
+        Err("Failed to parse public key. Supported formats: WSC bytes, DER, PEM".to_string())
     }
 
     fn parse_secret_key(key_bytes: Vec<u8>) -> Result<Vec<u8>, String> {
-        // Try to parse as any supported format
-        // Try raw bytes first
+        // Try explicit formats (no auto-detection per security policy)
+        // Note: OpenSSH format not supported - convert to PEM first
+        // Try raw WSC bytes first
         if let Ok(sk) = SecretKey::from_bytes(&key_bytes) {
             return Ok(sk.to_bytes());
         }
@@ -115,16 +127,13 @@ impl Guest for Component {
         if let Ok(sk) = SecretKey::from_der(&key_bytes) {
             return Ok(sk.to_bytes());
         }
-        // Try PEM/OpenSSH
+        // Try PEM (text format)
         if let Ok(s) = std::str::from_utf8(&key_bytes) {
             if let Ok(sk) = SecretKey::from_pem(s) {
                 return Ok(sk.to_bytes());
             }
-            if let Ok(sk) = SecretKey::from_openssh(s) {
-                return Ok(sk.to_bytes());
-            }
         }
-        Err("Failed to parse secret key in any known format".to_string())
+        Err("Failed to parse secret key. Supported formats: WSC bytes, DER, PEM".to_string())
     }
 
     fn to_pem_public(key_bytes: Vec<u8>) -> Result<String, String> {
