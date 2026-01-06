@@ -1,16 +1,23 @@
-# WSC Threat Model (STRIDE Analysis)
+# WSC Component Threat Analysis (STRIDE)
 
-This document provides a comprehensive threat analysis of the WebAssembly Signature Component (WSC) using the STRIDE methodology. It is intended to support TARA (Threat Analysis and Risk Assessment) requirements for automotive (ISO/SAE 21434) and IoT (IEC 62443) deployments.
+This document provides a **component-level** threat analysis of the WebAssembly Signature Component (WSC) using the STRIDE methodology.
+
+> **Important Clarification**: This is NOT a system-level TARA (Threat Analysis and Risk Assessment). WSC is a cryptographic component that cannot perform TARA in isolation. System integrators must:
+> 1. Perform TARA on their ITEM (vehicle ECU, IoT device, etc.)
+> 2. Reference this document as evidence for the WSC component
+> 3. See `docs/security/INTEGRATION_GUIDANCE.md` for integration help
+> 4. See `docs/security/RISK_ASSESSMENT.md` for quantified risk ratings
 
 ## Document Information
 
 | Field | Value |
 |-------|-------|
-| Version | 1.0 |
-| Date | 2026-01-04 |
+| Version | 1.1 |
+| Date | 2026-01-06 |
 | Status | Active |
 | Classification | Public |
 | Review Cycle | Quarterly |
+| Scope | Component-level analysis only |
 
 ## System Overview
 
@@ -302,15 +309,19 @@ WSC is a WebAssembly module signing and verification toolkit that provides:
 
 ---
 
-## Compliance Mapping
+## Compliance Evidence
 
-| Requirement | Standard | WSC Control |
-|-------------|----------|-------------|
-| Cryptographic strength | ISO 21434 | Ed25519 (128-bit), SHA-256 |
-| Key management | IEC 62443 | Secure storage, zeroization |
-| Audit logging | ISO 27001 | Rekor integration |
-| Secure development | SLSA L2+ | Provenance, reproducible builds |
-| Memory safety | MISRA C++ | Rust #![forbid(unsafe_code)] |
+This STRIDE analysis provides evidence for the following standards. Note that full compliance requires system-level TARA by the integrator.
+
+| Requirement | Standard | WSC Control | Evidence Type |
+|-------------|----------|-------------|---------------|
+| Cryptographic strength | ISO 21434 | Ed25519 (128-bit), SHA-256 | Component claim |
+| Key management | IEC 62443 | Secure storage, zeroization | Component claim |
+| Audit logging | ISO 27001 | Rekor integration | Component claim |
+| Secure development | SLSA L2+ | Provenance, reproducible builds | Build evidence |
+| Memory safety | MISRA C++ | Rust #![forbid(unsafe_code)] | Design evidence |
+
+For quantified risk assessment with ISO 21434 Attack Feasibility ratings, see `docs/security/RISK_ASSESSMENT.md`.
 
 ---
 
@@ -332,3 +343,4 @@ WSC is a WebAssembly module signing and verification toolkit that provides:
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-01-04 | WSC Team | Initial STRIDE analysis |
+| 1.1 | 2026-01-06 | WSC Team | Clarified component vs system scope, added TARA integration guidance |

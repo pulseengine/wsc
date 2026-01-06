@@ -2,14 +2,56 @@
 
 This document provides step-by-step procedures for responding to security incidents involving WSC deployments.
 
+> **Note for System Integrators**: This runbook covers WSC component incidents. You must integrate these procedures into your system-level incident response plan.
+
 ## Document Information
 
 | Field | Value |
 |-------|-------|
-| Version | 1.0 |
-| Date | 2026-01-04 |
+| Version | 1.1 |
+| Date | 2026-01-06 |
 | Classification | Public |
 | Review Cycle | Annually |
+
+---
+
+## RACI Matrix
+
+For each incident type, responsibilities are assigned using RACI:
+- **R**esponsible: Does the work
+- **A**ccountable: Ultimately answerable
+- **C**onsulted: Provides input
+- **I**nformed: Kept up to date
+
+### WSC Project Incidents
+
+| Activity | WSC Maintainers | System Integrator | End User |
+|----------|-----------------|-------------------|----------|
+| Detect WSC vulnerability | R/A | C | I |
+| Patch WSC code | R/A | I | I |
+| Release security advisory | R/A | I | I |
+| Update WSC dependency | I | R/A | I |
+| Regression test | I | R/A | I |
+
+### Deployment Incidents
+
+| Activity | WSC Maintainers | System Integrator | End User |
+|----------|-----------------|-------------------|----------|
+| Detect signing key compromise | C | R/A | I |
+| Revoke compromised key | C | R/A | I |
+| Generate new key | I | R/A | I |
+| Re-sign affected modules | I | R/A | I |
+| Update trust bundles | I | R/A | I |
+| Notify downstream users | I | R/A | I |
+
+### Sigstore Incidents
+
+| Activity | WSC Maintainers | Sigstore Team | System Integrator |
+|----------|-----------------|---------------|-------------------|
+| Detect Sigstore compromise | I | R/A | C |
+| Publish advisory | I | R/A | I |
+| Switch to offline mode | I | I | R/A |
+| Audit affected signatures | C | C | R/A |
 
 ---
 
@@ -309,11 +351,30 @@ Timeline:
 
 ## Emergency Contacts
 
+### WSC Project
+
 | Role | Contact |
 |------|---------|
-| Security Lead | [To be filled] |
-| Sigstore Security | security@sigstore.dev |
-| GitHub Security | security@github.com |
+| Security Reports | File issue at https://github.com/pulseengine/wsc/security |
+| General Issues | https://github.com/pulseengine/wsc/issues |
+
+### External Services
+
+| Service | Contact | When to Use |
+|---------|---------|-------------|
+| Sigstore Security | security@sigstore.dev | Fulcio/Rekor incidents |
+| GitHub Security | security@github.com | GitHub Actions token issues |
+
+### System Integrator (Fill In Your Contacts)
+
+| Role | Contact | Notes |
+|------|---------|-------|
+| Security Lead | [Your security team] | First escalation point |
+| On-Call Engineer | [Your on-call] | For critical severity |
+| Legal/Compliance | [Your legal team] | For data breach notification |
+| Communications | [Your PR team] | For public disclosure |
+
+**Note**: System integrators must fill in their own contacts above.
 
 ---
 
@@ -375,3 +436,4 @@ rekor-cli verify --artifact signed.wasm --signature sig.bin
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-01-04 | WSC Team | Initial incident response runbook |
+| 1.1 | 2026-01-06 | WSC Team | Added RACI matrix, improved contacts section, integrator guidance |

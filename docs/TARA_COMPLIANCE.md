@@ -1,15 +1,22 @@
-# WSC TARA Compliance Mapping
+# WSC Security Evidence for TARA
 
-This document maps WSC security controls to TARA (Threat Analysis and Risk Assessment) requirements for automotive (ISO/SAE 21434) and industrial IoT (IEC 62443) deployments.
+This document provides **component-level security evidence** that system integrators can reference when performing TARA (Threat Analysis and Risk Assessment) on their systems.
+
+> **Critical Distinction**: WSC does not "perform TARA" - it provides evidence FOR your TARA.
+>
+> - **Your responsibility**: Perform TARA on your ITEM (vehicle ECU, IoT device, etc.)
+> - **WSC provides**: Component security claims, threat analysis, risk assessment evidence
+> - **See also**: `docs/security/INTEGRATION_GUIDANCE.md` for integration help
 
 ## Document Information
 
 | Field | Value |
 |-------|-------|
-| Version | 1.0 |
-| Date | 2026-01-04 |
+| Version | 1.1 |
+| Date | 2026-01-06 |
 | Standards | ISO/SAE 21434, IEC 62443, SLSA |
 | Status | Active |
+| Scope | Component-level evidence only |
 
 ---
 
@@ -17,14 +24,18 @@ This document maps WSC security controls to TARA (Threat Analysis and Risk Asses
 
 ### Work Products Mapping
 
-| WP ID | Work Product | WSC Artifact | Status |
-|-------|--------------|--------------|--------|
-| WP-06-01 | Threat Analysis | docs/THREAT_MODEL.md | Complete |
-| WP-06-02 | Risk Assessment | THREAT_MODEL.md Risk ratings | Complete |
-| WP-07-01 | Cybersecurity Goals | SECURITY.md | Complete |
-| WP-07-02 | Cybersecurity Claims | This document | Complete |
-| WP-08-01 | Vulnerability Analysis | Fuzz testing, audit | Ongoing |
-| WP-09-01 | Cybersecurity Verification | cargo test, fuzz | Complete |
+WSC provides **component-level evidence** for the following work products. System integrators must create their own system-level work products.
+
+| WP ID | Work Product | WSC Evidence | Evidence Status | Notes |
+|-------|--------------|--------------|-----------------|-------|
+| WP-06-01 | Threat Analysis | docs/THREAT_MODEL.md | Component-level | Covers WSC threats only |
+| WP-06-02 | Risk Assessment | docs/security/RISK_ASSESSMENT.md | Component-level | ISO 21434 AF ratings |
+| WP-07-01 | Cybersecurity Goals | Security claims below | Component-level | Goals for WSC component |
+| WP-07-02 | Cybersecurity Claims | This document | Component-level | Claims for WSC only |
+| WP-08-01 | Vulnerability Analysis | Fuzz testing results | Component-level | 6 fuzz targets |
+| WP-09-01 | Verification | cargo test, fuzz | Component-level | Test coverage reports |
+
+**Note**: "Complete" status for component evidence does NOT mean your system TARA is complete.
 
 ### Cybersecurity Goals
 
@@ -51,16 +62,25 @@ This document maps WSC security controls to TARA (Threat Analysis and Risk Asses
 
 ## IEC 62443 (Industrial Automation Cybersecurity)
 
-### Security Level Mapping
+### Security Level Capability
 
-WSC supports Security Levels 1-3:
+**WSC Component Security Level (SL-C) = 2**
 
-| SL | Description | WSC Capability |
-|----|-------------|----------------|
-| SL 1 | Casual/coincidental | Software key storage |
-| SL 2 | Intentional, low resources | Certificate pinning, file permissions |
-| SL 3 | Sophisticated attacker | HSM integration (roadmap), airgapped ops |
-| SL 4 | State-level threat | Requires external HSM + secure boot |
+WSC is a software component. Its security level capability is:
+
+| SL | Description | WSC Capability | Status |
+|----|-------------|----------------|--------|
+| SL 1 | Casual/coincidental | Software key storage, basic verification | **Supported** |
+| SL 2 | Intentional, low resources | + Certificate pinning, file permissions, zeroization | **Supported** |
+| SL 3 | Sophisticated attacker | + HSM integration required | **Requires HSM** |
+| SL 4 | State-level threat | + TEE, secure boot, anti-tamper | **Not Supported** |
+
+**Important Clarifications:**
+
+- **SL-C (Component)**: What WSC can achieve = **2**
+- **SL-T (Target)**: What your system aims for = **Determined by you**
+- Achieving SL-T = 3 with WSC requires enabling HSM backend via `platform/` module (in development)
+- SL-T = 4 requires external TEE and secure boot chain beyond WSC's scope
 
 ### Foundational Requirements (FR)
 
@@ -174,25 +194,27 @@ For Common Criteria evaluation at EAL2 or above:
 
 ---
 
-## Compliance Gaps and Roadmap
+## Known Limitations and Roadmap
 
-### Current Gaps
+### Current Limitations
 
-| Gap | Standard | Impact | Mitigation Plan |
-|-----|----------|--------|-----------------|
-| HSM integration incomplete | IEC 62443 SL3+ | Medium | Platform module scaffolded |
-| OCSP/CRL not implemented | ISO 21434 | Low | Fulcio short-lived certs |
-| Reproducible builds | SLSA 3 | Low | Bazel build in progress |
-| Formal verification | EAL4+ | Medium | Not planned |
+| Limitation | Standard Impact | Current Mitigation | Future Plan |
+|------------|-----------------|-------------------|-------------|
+| Software-only keys (no HSM) | IEC 62443 SL-C = 2 max | File permissions, zeroization | HSM in `platform/` module |
+| No OCSP/CRL | ISO 21434 minimal | Fulcio 10-min certs | Document as accepted risk |
+| ureq cert pinning limitation | Defense in depth | Pins defined, partial enforcement | Track ureq #1087 |
+| Reproducible builds in progress | SLSA 3 | Bazel hermetic builds | Q2 2026 |
 
-### Compliance Roadmap
+### Roadmap
 
-| Quarter | Milestone | Standards |
-|---------|-----------|-----------|
-| Q1 2026 | Certificate pinning GA | All |
-| Q2 2026 | HSM integration | IEC 62443 SL3 |
-| Q3 2026 | Reproducible builds | SLSA 3 |
-| Q4 2026 | Security certification prep | ISO 21434 |
+| Quarter | Milestone | Impact |
+|---------|-----------|--------|
+| Q1 2026 | Complete TARA documentation | Audit-ready evidence package |
+| Q2 2026 | HSM integration | Enable SL-C = 3 claims |
+| Q3 2026 | Reproducible builds | SLSA 3 compliance |
+| Q4 2026 | Third-party security audit | Certification preparation |
+
+**Note**: This roadmap is for WSC component improvements. System integrators must maintain their own compliance roadmaps.
 
 ---
 
@@ -270,3 +292,4 @@ For TARA compliance, the following events should be logged:
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-01-04 | WSC Team | Initial compliance mapping |
+| 1.1 | 2026-01-06 | WSC Team | Clarified component vs system scope, fixed SL claims, added cross-references |
