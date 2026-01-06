@@ -114,6 +114,31 @@ pub enum WSError {
     // Time validation errors
     #[error("Time error: {0}")]
     TimeError(String),
+
+    // Transformation chain verification errors
+    #[error("Chain verification failed: {0}")]
+    ChainVerificationFailed(String),
+
+    #[error("Missing transformation attestation")]
+    MissingAttestation,
+
+    #[error("Untrusted transformation tool: {0}")]
+    UntrustedTool(String),
+
+    #[error("Untrusted attestation signer: {0}")]
+    UntrustedAttestationSigner(String),
+
+    #[error("Missing root signature: expected signed input at '{0}'")]
+    MissingRootSignature(String),
+
+    #[error("Chain gap: no attestation links '{from}' to '{to}'")]
+    ChainGap { from: String, to: String },
+
+    #[error("Invalid attestation signature: {0}")]
+    InvalidAttestationSignature(String),
+
+    #[error("Attestation timestamp invalid: {0}")]
+    AttestationTimestampInvalid(String),
 }
 
 // X509 error conversion

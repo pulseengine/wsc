@@ -1,0 +1,24 @@
+[package]
+name = "wsc-attestation"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Transformation attestation types for WebAssembly toolchains"
+readme = "README.md"
+keywords = ["webassembly", "attestation", "provenance", "supply-chain"]
+homepage = "https://github.com/pulseengine/wsc"
+categories = ["wasm", "development-tools"]
+
+# Minimal dependencies - this crate is designed to be lightweight
+# so tools like Loom/WAC can add attestations without heavy deps
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+hex = "0.4"
+getrandom = "0.3"
+sha2 = "0.10"  # Proper SHA-256 for artifact hashing
+
+[dev-dependencies]

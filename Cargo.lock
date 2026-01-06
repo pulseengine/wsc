@@ -1787,8 +1787,21 @@ dependencies = [
  "wasi 0.14.7+wasi-0.2.4",
  "wat",
  "webpki-roots",
+ "wsc-attestation",
  "x509-parser",
  "zeroize",
+]
+
+[[package]]
+name = "wsc-attestation"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "getrandom 0.3.4",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
