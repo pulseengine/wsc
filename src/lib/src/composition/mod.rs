@@ -1,6 +1,21 @@
 use crate::error::WSError;
 use crate::wasm_module::{CustomSection, Module, Section, SectionLike};
 use base64::Engine;
+
+// Re-export attestation types from the minimal attestation crate
+pub use wsc_attestation::{
+    // Section constants
+    TRANSFORMATION_ATTESTATION_SECTION, TRANSFORMATION_AUDIT_TRAIL_SECTION,
+    // Build provenance
+    BuildProvenance, ProvenanceBuilder,
+    // Transformation types
+    TransformationType, ArtifactDescriptor, SignatureStatus,
+    InputSignatureInfo, ToolInfo, AttestationSignature,
+    InputArtifact, TransformationAttestation,
+    RootComponent, TransformationAuditTrail,
+    // Builder
+    TransformationAttestationBuilder,
+};
 /// Component composition and provenance tracking
 ///
 /// This module provides support for WebAssembly component composition with
@@ -73,128 +88,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use x509_parser::prelude::FromDer;
 
-/// Build provenance for a WASM component
-///
-/// Captures information about how a component was built, following
-/// the SLSA provenance format.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BuildProvenance {
-    /// Component name
-    pub name: String,
-
-    /// Component version (semver)
-    pub version: String,
-
-    /// Source repository URL
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_repo: Option<String>,
-
-    /// Git commit SHA
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub commit_sha: Option<String>,
-
-    /// Build tool name (e.g., "cargo", "wasm-pack")
-    pub build_tool: String,
-
-    /// Build tool version
-    pub build_tool_version: String,
-
-    /// Builder identity (CI system, developer, etc.)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub builder: Option<String>,
-
-    /// Build timestamp (ISO 8601)
-    pub build_timestamp: String,
-
-    /// Additional metadata
-    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
-    pub metadata: HashMap<String, String>,
-}
-
-/// Builder for creating BuildProvenance
-pub struct ProvenanceBuilder {
-    name: Option<String>,
-    version: Option<String>,
-    source_repo: Option<String>,
-    commit_sha: Option<String>,
-    build_tool: Option<String>,
-    build_tool_version: Option<String>,
-    builder: Option<String>,
-    metadata: HashMap<String, String>,
-}
-
-impl ProvenanceBuilder {
-    pub fn new() -> Self {
-        Self {
-            name: None,
-            version: None,
-            source_repo: None,
-            commit_sha: None,
-            build_tool: None,
-            build_tool_version: None,
-            builder: None,
-            metadata: HashMap::new(),
-        }
-    }
-
-    pub fn component_name(mut self, name: impl Into<String>) -> Self {
-        self.name = Some(name.into());
-        self
-    }
-
-    pub fn version(mut self, version: impl Into<String>) -> Self {
-        self.version = Some(version.into());
-        self
-    }
-
-    pub fn source_repo(mut self, repo: impl Into<String>) -> Self {
-        self.source_repo = Some(repo.into());
-        self
-    }
-
-    pub fn commit_sha(mut self, sha: impl Into<String>) -> Self {
-        self.commit_sha = Some(sha.into());
-        self
-    }
-
-    pub fn build_tool(mut self, tool: impl Into<String>, version: impl Into<String>) -> Self {
-        self.build_tool = Some(tool.into());
-        self.build_tool_version = Some(version.into());
-        self
-    }
-
-    pub fn builder_identity(mut self, builder: impl Into<String>) -> Self {
-        self.builder = Some(builder.into());
-        self
-    }
-
-    pub fn add_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.metadata.insert(key.into(), value.into());
-        self
-    }
-
-    pub fn build(self) -> BuildProvenance {
-        BuildProvenance {
-            name: self.name.unwrap_or_else(|| "unknown".to_string()),
-            version: self.version.unwrap_or_else(|| "0.0.0".to_string()),
-            source_repo: self.source_repo,
-            commit_sha: self.commit_sha,
-            build_tool: self.build_tool.unwrap_or_else(|| "unknown".to_string()),
-            build_tool_version: self
-                .build_tool_version
-                .unwrap_or_else(|| "unknown".to_string()),
-            builder: self.builder,
-            build_timestamp: chrono::Utc::now().to_rfc3339(),
-            metadata: self.metadata,
-        }
-    }
-}
-
-impl Default for ProvenanceBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// BuildProvenance and ProvenanceBuilder are re-exported from wsc_attestation
 
 /// Reference to a component in a composition
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -339,6 +233,12 @@ pub const SBOM_SECTION: &str = "wsc.sbom";
 
 /// Custom section name for in-toto attestation
 pub const INTOTO_ATTESTATION_SECTION: &str = "wsc.intoto.attestation";
+
+// All transformation attestation types (TransformationType, ArtifactDescriptor,
+// SignatureStatus, InputSignatureInfo, ToolInfo, AttestationSignature, InputArtifact,
+// TransformationAttestation, RootComponent, TransformationAuditTrail,
+// TransformationAttestationBuilder) and section constants are re-exported from
+// wsc_attestation crate at the top of this module.
 
 // ============================================================================
 // Dependency Graph and Validation
@@ -1613,6 +1513,549 @@ pub fn extract_all_provenance(module: &Module) -> Result<AllProvenanceData, WSEr
     let sbom = extract_sbom(module)?;
     let attestation = extract_intoto_attestation(module)?;
     Ok((manifest, provenance, sbom, attestation))
+}
+
+// ============================================================================
+// Transformation Attestation Embedding/Extraction
+// ============================================================================
+
+/// Embed a transformation attestation in a WASM module as a custom section
+///
+/// This is used by transformation tools (like Loom, WAC) to record
+/// their transformation of a module.
+pub fn embed_transformation_attestation(
+    mut module: Module,
+    attestation: &TransformationAttestation,
+) -> Result<Module, WSError> {
+    let json = attestation.to_json().map_err(|e| {
+        WSError::InternalError(format!("Failed to serialize transformation attestation: {}", e))
+    })?;
+
+    let custom_section = CustomSection::new(
+        TRANSFORMATION_ATTESTATION_SECTION.to_string(),
+        json.as_bytes().to_vec(),
+    );
+
+    module.sections.push(Section::Custom(custom_section));
+    Ok(module)
+}
+
+/// Extract transformation attestation from a WASM module
+///
+/// Returns the most recent transformation attestation if present.
+/// For multi-stage pipelines, the attestation contains nested chains.
+pub fn extract_transformation_attestation(
+    module: &Module,
+) -> Result<Option<TransformationAttestation>, WSError> {
+    for section in &module.sections {
+        if let Section::Custom(custom) = section
+            && custom.name() == TRANSFORMATION_ATTESTATION_SECTION
+        {
+            let json = std::str::from_utf8(custom.payload()).map_err(|e| {
+                WSError::InternalError(format!(
+                    "Invalid UTF-8 in transformation attestation: {}",
+                    e
+                ))
+            })?;
+
+            let attestation = TransformationAttestation::from_json(json).map_err(|e| {
+                WSError::InternalError(format!(
+                    "Failed to deserialize transformation attestation: {}",
+                    e
+                ))
+            })?;
+
+            return Ok(Some(attestation));
+        }
+    }
+    Ok(None)
+}
+
+/// Extract all transformation attestations from a WASM module
+///
+/// Some modules may have multiple attestation sections (one per transformation stage).
+/// This returns all of them in the order they appear in the module.
+pub fn extract_all_transformation_attestations(
+    module: &Module,
+) -> Result<Vec<TransformationAttestation>, WSError> {
+    let mut attestations = Vec::new();
+
+    for section in &module.sections {
+        if let Section::Custom(custom) = section
+            && custom.name() == TRANSFORMATION_ATTESTATION_SECTION
+        {
+            let json = std::str::from_utf8(custom.payload()).map_err(|e| {
+                WSError::InternalError(format!(
+                    "Invalid UTF-8 in transformation attestation: {}",
+                    e
+                ))
+            })?;
+
+            let attestation = TransformationAttestation::from_json(json).map_err(|e| {
+                WSError::InternalError(format!(
+                    "Failed to deserialize transformation attestation: {}",
+                    e
+                ))
+            })?;
+
+            attestations.push(attestation);
+        }
+    }
+
+    Ok(attestations)
+}
+
+/// Embed a full transformation audit trail in a WASM module
+///
+/// The audit trail contains the complete chain of transformations
+/// from original signed components to the final artifact.
+pub fn embed_transformation_audit_trail(
+    mut module: Module,
+    trail: &TransformationAuditTrail,
+) -> Result<Module, WSError> {
+    let json = trail.to_json().map_err(|e| {
+        WSError::InternalError(format!("Failed to serialize transformation audit trail: {}", e))
+    })?;
+
+    let custom_section = CustomSection::new(
+        TRANSFORMATION_AUDIT_TRAIL_SECTION.to_string(),
+        json.as_bytes().to_vec(),
+    );
+
+    module.sections.push(Section::Custom(custom_section));
+    Ok(module)
+}
+
+/// Extract transformation audit trail from a WASM module
+pub fn extract_transformation_audit_trail(
+    module: &Module,
+) -> Result<Option<TransformationAuditTrail>, WSError> {
+    for section in &module.sections {
+        if let Section::Custom(custom) = section
+            && custom.name() == TRANSFORMATION_AUDIT_TRAIL_SECTION
+        {
+            let json = std::str::from_utf8(custom.payload()).map_err(|e| {
+                WSError::InternalError(format!(
+                    "Invalid UTF-8 in transformation audit trail: {}",
+                    e
+                ))
+            })?;
+
+            let trail = TransformationAuditTrail::from_json(json).map_err(|e| {
+                WSError::InternalError(format!(
+                    "Failed to deserialize transformation audit trail: {}",
+                    e
+                ))
+            })?;
+
+            return Ok(Some(trail));
+        }
+    }
+    Ok(None)
+}
+
+/// Remove transformation attestation sections from a module
+///
+/// Useful when re-transforming a module and replacing old attestations.
+pub fn remove_transformation_attestations(mut module: Module) -> Module {
+    module.sections.retain(|section| {
+        if let Section::Custom(custom) = section {
+            custom.name() != TRANSFORMATION_ATTESTATION_SECTION
+                && custom.name() != TRANSFORMATION_AUDIT_TRAIL_SECTION
+        } else {
+            true
+        }
+    });
+    module
+}
+
+// ============================================================================
+// Chain Verification
+// ============================================================================
+
+/// Verification mode for transformation chains
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChainVerificationMode {
+    /// All root inputs must have verified signatures
+    AllInputsSigned,
+    /// At least one root input must have a verified signature
+    AnyInputSigned,
+    /// Don't require root signatures (trust the chain alone)
+    NoRootSignaturesRequired,
+}
+
+/// Information about a trusted transformation tool
+#[derive(Debug, Clone)]
+pub struct TrustedToolInfo {
+    /// Minimum required version (inclusive)
+    pub min_version: Option<String>,
+    /// Maximum allowed version (inclusive)
+    pub max_version: Option<String>,
+    /// Optional: Required tool hash for exact matching
+    pub required_hash: Option<String>,
+}
+
+impl TrustedToolInfo {
+    /// Create a new trusted tool info that accepts any version
+    pub fn any_version() -> Self {
+        Self {
+            min_version: None,
+            max_version: None,
+            required_hash: None,
+        }
+    }
+
+    /// Create a trusted tool info with a minimum version requirement
+    pub fn min_version(version: impl Into<String>) -> Self {
+        Self {
+            min_version: Some(version.into()),
+            max_version: None,
+            required_hash: None,
+        }
+    }
+
+    /// Check if a tool version satisfies this constraint
+    pub fn satisfies(&self, version: &str, tool_hash: Option<&str>) -> bool {
+        // Check hash first if required
+        if let Some(required) = &self.required_hash {
+            if tool_hash != Some(required.as_str()) {
+                return false;
+            }
+        }
+
+        // Simple version comparison (assumes semver-like ordering)
+        if let Some(min) = &self.min_version {
+            if version < min.as_str() {
+                return false;
+            }
+        }
+
+        if let Some(max) = &self.max_version {
+            if version > max.as_str() {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+/// Policy for verifying transformation chains
+#[derive(Debug, Clone)]
+pub struct ChainVerificationPolicy {
+    /// Whether root components must have valid signatures
+    pub mode: ChainVerificationMode,
+
+    /// Trusted root signers (key IDs or certificate subjects)
+    pub trusted_root_signers: std::collections::HashSet<String>,
+
+    /// Trusted transformation tools (tool name -> version constraints)
+    pub trusted_tools: HashMap<String, TrustedToolInfo>,
+
+    /// Trusted attestation signers (key IDs or certificate subjects for attestations)
+    pub trusted_attestation_signers: std::collections::HashSet<String>,
+
+    /// Maximum age for attestation timestamps (optional)
+    pub max_attestation_age: Option<std::time::Duration>,
+
+    /// Whether to verify attestation signatures (requires key material)
+    pub verify_attestation_signatures: bool,
+}
+
+impl Default for ChainVerificationPolicy {
+    fn default() -> Self {
+        Self {
+            mode: ChainVerificationMode::AllInputsSigned,
+            trusted_root_signers: std::collections::HashSet::new(),
+            trusted_tools: HashMap::new(),
+            trusted_attestation_signers: std::collections::HashSet::new(),
+            max_attestation_age: None,
+            verify_attestation_signatures: false,
+        }
+    }
+}
+
+impl ChainVerificationPolicy {
+    /// Create a lenient policy that doesn't require root signatures
+    pub fn lenient() -> Self {
+        Self {
+            mode: ChainVerificationMode::NoRootSignaturesRequired,
+            ..Default::default()
+        }
+    }
+
+    /// Create a strict policy that requires all inputs to be signed
+    pub fn strict() -> Self {
+        Self {
+            mode: ChainVerificationMode::AllInputsSigned,
+            ..Default::default()
+        }
+    }
+
+    /// Add a trusted root signer
+    pub fn add_trusted_root_signer(mut self, signer: impl Into<String>) -> Self {
+        self.trusted_root_signers.insert(signer.into());
+        self
+    }
+
+    /// Add a trusted tool
+    pub fn add_trusted_tool(mut self, name: impl Into<String>, info: TrustedToolInfo) -> Self {
+        self.trusted_tools.insert(name.into(), info);
+        self
+    }
+
+    /// Add a trusted attestation signer
+    pub fn add_trusted_attestation_signer(mut self, signer: impl Into<String>) -> Self {
+        self.trusted_attestation_signers.insert(signer.into());
+        self
+    }
+
+    /// Set maximum attestation age
+    pub fn with_max_attestation_age(mut self, age: std::time::Duration) -> Self {
+        self.max_attestation_age = Some(age);
+        self
+    }
+}
+
+/// Result of chain verification
+#[derive(Debug, Clone)]
+pub struct ChainVerificationResult {
+    /// Whether the chain is valid according to the policy
+    pub valid: bool,
+
+    /// Errors encountered during verification
+    pub errors: Vec<String>,
+
+    /// Warnings (non-fatal issues)
+    pub warnings: Vec<String>,
+
+    /// Tools found in the chain
+    pub tools_used: Vec<String>,
+
+    /// Number of transformation stages
+    pub transformation_count: usize,
+
+    /// Root components found
+    pub root_components: Vec<String>,
+}
+
+impl ChainVerificationResult {
+    fn new() -> Self {
+        Self {
+            valid: true,
+            errors: Vec::new(),
+            warnings: Vec::new(),
+            tools_used: Vec::new(),
+            transformation_count: 0,
+            root_components: Vec::new(),
+        }
+    }
+
+    fn add_error(&mut self, error: impl Into<String>) {
+        self.valid = false;
+        self.errors.push(error.into());
+    }
+
+    fn add_warning(&mut self, warning: impl Into<String>) {
+        self.warnings.push(warning.into());
+    }
+}
+
+/// Verify a transformation chain against a policy
+///
+/// This walks through the attestation chain and verifies:
+/// 1. Each transformation tool is trusted
+/// 2. Attestation timestamps are within bounds
+/// 3. Root inputs have valid signatures (according to policy)
+/// 4. Hash chains are consistent (no gaps)
+pub fn verify_transformation_chain(
+    attestation: &TransformationAttestation,
+    policy: &ChainVerificationPolicy,
+) -> ChainVerificationResult {
+    let mut result = ChainVerificationResult::new();
+    verify_attestation_recursive(attestation, policy, &mut result, 0);
+    result
+}
+
+fn verify_attestation_recursive(
+    attestation: &TransformationAttestation,
+    policy: &ChainVerificationPolicy,
+    result: &mut ChainVerificationResult,
+    depth: usize,
+) {
+    const MAX_CHAIN_DEPTH: usize = 100;
+
+    if depth > MAX_CHAIN_DEPTH {
+        result.add_error(format!(
+            "Chain depth exceeds maximum ({}) - possible cycle",
+            MAX_CHAIN_DEPTH
+        ));
+        return;
+    }
+
+    result.transformation_count += 1;
+
+    // Track the tool used
+    let tool_name = &attestation.tool.name;
+    if !result.tools_used.contains(tool_name) {
+        result.tools_used.push(tool_name.clone());
+    }
+
+    // Verify tool is trusted
+    if let Some(tool_info) = policy.trusted_tools.get(tool_name) {
+        if !tool_info.satisfies(&attestation.tool.version, attestation.tool.tool_hash.as_deref()) {
+            result.add_error(format!(
+                "Tool '{}' version '{}' does not meet policy requirements",
+                tool_name, attestation.tool.version
+            ));
+        }
+    } else if !policy.trusted_tools.is_empty() {
+        // If trusted_tools is specified, tool must be in the list
+        result.add_error(format!("Tool '{}' is not in trusted tools list", tool_name));
+    }
+
+    // Verify attestation timestamp if policy has age limit
+    if let Some(max_age) = policy.max_attestation_age {
+        if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(&attestation.timestamp) {
+            let now = chrono::Utc::now();
+            let age = now.signed_duration_since(timestamp);
+            if age > chrono::Duration::from_std(max_age).unwrap_or(chrono::TimeDelta::MAX) {
+                result.add_error(format!(
+                    "Attestation timestamp {} is older than maximum allowed age",
+                    attestation.timestamp
+                ));
+            }
+        } else {
+            result.add_warning(format!(
+                "Could not parse attestation timestamp: {}",
+                attestation.timestamp
+            ));
+        }
+    }
+
+    // Verify attestation signer if policy requires it
+    if !policy.trusted_attestation_signers.is_empty() {
+        let signer = attestation
+            .attestation_signature
+            .signer_identity
+            .as_ref()
+            .or(attestation.attestation_signature.key_id.as_ref());
+
+        if let Some(signer_id) = signer {
+            if !policy.trusted_attestation_signers.contains(signer_id) {
+                result.add_error(format!(
+                    "Attestation signer '{}' is not trusted",
+                    signer_id
+                ));
+            }
+        } else {
+            result.add_error("Attestation has no signer identity or key ID");
+        }
+    }
+
+    // Process inputs
+    let mut signed_inputs = 0;
+    let mut unsigned_inputs = 0;
+
+    for input in &attestation.inputs {
+        // Check for nested transformation chain
+        if let Some(prior_attestation) = &input.transformation_chain {
+            // Verify the hash chain is consistent
+            if input.artifact.hash != prior_attestation.output.hash {
+                result.add_error(format!(
+                    "Hash mismatch in chain: input {} doesn't match prior output",
+                    input.artifact.name
+                ));
+            }
+
+            // Recursively verify the prior attestation
+            verify_attestation_recursive(prior_attestation, policy, result, depth + 1);
+        } else {
+            // This is a root input (original component)
+            result.root_components.push(input.artifact.name.clone());
+
+            match input.signature_status {
+                SignatureStatus::Verified => {
+                    signed_inputs += 1;
+
+                    // Verify signer is trusted if policy specifies trusted signers
+                    if !policy.trusted_root_signers.is_empty() {
+                        if let Some(sig_info) = &input.signature_info {
+                            let signer = sig_info
+                                .signer_identity
+                                .as_ref()
+                                .or(sig_info.key_id.as_ref());
+
+                            if let Some(signer_id) = signer {
+                                if !policy.trusted_root_signers.contains(signer_id) {
+                                    result.add_warning(format!(
+                                        "Root signer '{}' for '{}' is not in trusted list",
+                                        signer_id, input.artifact.name
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+                SignatureStatus::SignedUnverified => {
+                    result.add_warning(format!(
+                        "Root input '{}' has signature but was not verified",
+                        input.artifact.name
+                    ));
+                }
+                SignatureStatus::Unsigned => {
+                    unsigned_inputs += 1;
+                }
+            }
+        }
+    }
+
+    // Apply signature mode policy
+    match policy.mode {
+        ChainVerificationMode::AllInputsSigned => {
+            if unsigned_inputs > 0 {
+                result.add_error(format!(
+                    "Policy requires all inputs signed, but {} inputs are unsigned",
+                    unsigned_inputs
+                ));
+            }
+        }
+        ChainVerificationMode::AnyInputSigned => {
+            if signed_inputs == 0 && !attestation.inputs.is_empty() {
+                result.add_error("Policy requires at least one signed input, but none found");
+            }
+        }
+        ChainVerificationMode::NoRootSignaturesRequired => {
+            // No action needed
+        }
+    }
+}
+
+/// Verify a transformation audit trail against a policy
+pub fn verify_audit_trail(
+    trail: &TransformationAuditTrail,
+    policy: &ChainVerificationPolicy,
+) -> ChainVerificationResult {
+    let mut result = ChainVerificationResult::new();
+
+    // Verify each transformation in the trail
+    for attestation in &trail.transformations {
+        let sub_result = verify_transformation_chain(attestation, policy);
+        result.errors.extend(sub_result.errors);
+        result.warnings.extend(sub_result.warnings);
+        result.tools_used.extend(sub_result.tools_used);
+        result.transformation_count += sub_result.transformation_count;
+        result.root_components.extend(sub_result.root_components);
+    }
+
+    // Deduplicate
+    result.tools_used.sort();
+    result.tools_used.dedup();
+    result.root_components.sort();
+    result.root_components.dedup();
+
+    result.valid = result.errors.is_empty();
+    result
 }
 
 // ============================================================================
