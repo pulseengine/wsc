@@ -28,14 +28,15 @@ rust_binary(
         "CARGO_PKG_DESCRIPTION": "CLI tool to sign and verify WebAssembly modules",
         "CARGO_PKG_AUTHORS": "Frank Denis <github@pureftpd.org>",
     },
-    deps = [
-        "//src/lib:wsc",
-        "@wsc_deps//:clap",
-        "@wsc_deps//:env_logger",
-        "@wsc_deps//:regex",
-        "@wsc_deps//:ureq-3.1.2",
-        "@wsc_deps//:wasi",
-    ],
+     deps = [
+         "//src/lib:wsc",
+         "@wsc_deps//:clap",
+         "@wsc_deps//:env_logger",
+         "@wsc_deps//:regex",
+         "@wsc_deps//:serde_json",
+         "@wsc_deps//:ureq-3.1.2",
+         "@wsc_deps//:wasi",
+     ],
     # No feature flags needed - HTTP client selected via #[cfg(target_os = "wasi")]
 )
 
