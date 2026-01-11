@@ -1,0 +1,36 @@
+# SLSA Level 3 Policy - Hardened build with transparency log
+#
+# Requires:
+# - Keyless signing via Sigstore (Fulcio + Rekor)
+# - All inputs verified
+# - Transparency log entry
+#
+# Use: wsc verify-chain -i app.wasm --policy slsa-l3.toml
+
+[policy]
+name = "slsa-l3"
+version = "1.0"
+enforcement = "strict"
+
+[slsa]
+minimum_level = 3  # Hardened build, non-forgeable provenance
+enforcement = "strict"
+
+[signatures]
+require_root_signatures = true
+require_attestation_signatures = true
+max_attestation_age_days = 7  # Tighter window for production
+enforcement = "strict"
+
+[trusted_tools.loom]
+min_version = "0.1.0"
+
+# Keyless verification - accepts signatures from GitHub Actions
+[trusted_tools.loom.keyless]
+oidc_issuers = ["https://token.actions.githubusercontent.com"]
+subjects = ["https://github.com/aspect-build/loom/.github/workflows/*"]
+
+[trusted_builders.github-actions]
+builder_id = "https://github.com/actions/runner"
+oidc_issuer = "https://token.actions.githubusercontent.com"
+allowed_repos = ["aspect-build/*", "aspect-dev/*"]

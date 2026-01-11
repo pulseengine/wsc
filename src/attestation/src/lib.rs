@@ -35,9 +35,30 @@
 //! This crate defines the standard section names but does NOT provide
 //! WASM parsing/embedding. Tools should use their own WASM libraries
 //! (wasmparser, wasm-encoder, etc.) to embed the JSON.
+//!
+//! ## Standards Compliance
+//!
+//! For industry-standard attestation formats (SLSA, DSSE, in-toto),
+//! use the official crates which this crate re-exports:
+//!
+//! - [`in_toto_attestation`] - Official in-toto Statement and predicate types
+//! - [`sigstore`] - Official Sigstore signing including DSSE envelopes
+//!
+//! This crate adds WASM-specific types on top of these standards.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+// ============================================================================
+// Re-export Official Standards Crates
+// ============================================================================
+
+/// Re-export official in-toto attestation types.
+///
+/// Provides Statement, Subject, and predicate types for SLSA provenance
+/// and other attestation formats.
+#[cfg(feature = "standards")]
+pub use in_toto_attestation;
 
 // ============================================================================
 // Section Name Constants
@@ -297,9 +318,21 @@ pub struct AttestationSignature {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_id: Option<String>,
 
+    /// Base64-encoded public key (for inline verification)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<String>,
+
     /// Signer identity from certificate (if keyless)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signer_identity: Option<String>,
+
+    /// Certificate chain (PEM-encoded, for keyless verification)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub certificate_chain: Option<String>,
+
+    /// Rekor transparency log entry UUID (if logged)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rekor_uuid: Option<String>,
 
     /// Timestamp of attestation signature (ISO 8601)
     pub signed_at: String,
@@ -666,11 +699,77 @@ impl TransformationAttestationBuilder {
                 algorithm: "unsigned".to_string(),
                 signature: String::new(),
                 key_id: None,
+                public_key: None,
                 signer_identity: None,
+                certificate_chain: None,
+                rekor_uuid: None,
                 signed_at: timestamp,
             },
             metadata: self.metadata,
         }
+    }
+
+    /// Build and sign the attestation with Ed25519
+    ///
+    /// This method signs the attestation using an Ed25519 secret key.
+    /// The public key is embedded in the attestation for verification.
+    ///
+    /// # Arguments
+    /// * `output_bytes` - The transformed output module bytes
+    /// * `output_name` - Name/path of the output file
+    /// * `secret_key` - Ed25519 secret key bytes (64 bytes: 32-byte seed + 32-byte public key)
+    /// * `key_id` - Optional key identifier for the signing key
+    ///
+    /// # Example
+    /// ```ignore
+    /// let sk_bytes = std::fs::read("loom-secret.key")?;
+    /// let attestation = builder.build_and_sign_ed25519(
+    ///     &output,
+    ///     "output.wasm",
+    ///     &sk_bytes,
+    ///     Some("loom-prod-2024".to_string()),
+    /// )?;
+    /// ```
+    #[cfg(feature = "signing")]
+    pub fn build_and_sign_ed25519(
+        self,
+        output_bytes: &[u8],
+        output_name: impl Into<String>,
+        secret_key_bytes: &[u8],
+        key_id: Option<String>,
+    ) -> Result<TransformationAttestation, String> {
+        use ct_codecs::{Base64, Encoder};
+        use ed25519_compact::SecretKey;
+
+        // Parse the secret key
+        let secret_key = SecretKey::from_slice(secret_key_bytes)
+            .map_err(|e| format!("Invalid Ed25519 secret key: {}", e))?;
+        let public_key = secret_key.public_key();
+
+        // Build the unsigned attestation first
+        let mut attestation = self.build(output_bytes, output_name);
+
+        // Create canonical JSON for signing (with empty signature)
+        // We sign the attestation with algorithm set but signature empty
+        attestation.attestation_signature.algorithm = "ed25519".to_string();
+        let canonical = serde_json::to_string(&attestation)
+            .map_err(|e| format!("Failed to serialize attestation: {}", e))?;
+
+        // Sign the canonical representation
+        let signature = secret_key.sign(canonical.as_bytes(), None);
+
+        // Encode signature and public key as base64
+        let sig_b64 = Base64::encode_to_string(signature.as_ref())
+            .map_err(|e| format!("Failed to encode signature: {}", e))?;
+        let pk_b64 = Base64::encode_to_string(public_key.as_ref())
+            .map_err(|e| format!("Failed to encode public key: {}", e))?;
+
+        // Update attestation with signature
+        attestation.attestation_signature.signature = sig_b64;
+        attestation.attestation_signature.public_key = Some(pk_b64);
+        attestation.attestation_signature.key_id = key_id;
+
+        Ok(attestation)
     }
 }
 
@@ -748,5 +847,62 @@ mod tests {
     fn test_section_names() {
         assert_eq!(TRANSFORMATION_ATTESTATION_SECTION, "wsc.transformation.attestation");
         assert_eq!(TRANSFORMATION_AUDIT_TRAIL_SECTION, "wsc.transformation.audit_trail");
+    }
+
+    #[test]
+    #[cfg(feature = "signing")]
+    fn test_build_and_sign_ed25519() {
+        use ed25519_compact::KeyPair;
+
+        // Generate a test keypair
+        let keypair = KeyPair::generate();
+
+        let input = b"test input module";
+        let output = b"test output module";
+
+        // Build and sign
+        let attestation = TransformationAttestationBuilder::new_optimization("loom", "0.1.0")
+            .add_input_unsigned(input, "input.wasm")
+            .add_parameter("opt_level", serde_json::json!("aggressive"))
+            .build_and_sign_ed25519(
+                output,
+                "output.wasm",
+                keypair.sk.as_ref(),
+                Some("test-key-id".to_string()),
+            )
+            .expect("Signing should succeed");
+
+        // Verify the attestation is signed
+        assert_eq!(attestation.attestation_signature.algorithm, "ed25519");
+        assert!(!attestation.attestation_signature.signature.is_empty());
+        assert!(attestation.attestation_signature.public_key.is_some());
+        assert_eq!(attestation.attestation_signature.key_id, Some("test-key-id".to_string()));
+
+        // Verify it can be serialized and deserialized
+        let json = attestation.to_json().unwrap();
+        let parsed = TransformationAttestation::from_json(&json).unwrap();
+        assert_eq!(parsed.attestation_signature.algorithm, "ed25519");
+        assert!(!parsed.attestation_signature.signature.is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "signing")]
+    fn test_build_and_sign_ed25519_invalid_key() {
+        let invalid_key = b"too short";
+
+        let input = b"test input module";
+        let output = b"test output module";
+
+        let result = TransformationAttestationBuilder::new_optimization("loom", "0.1.0")
+            .add_input_unsigned(input, "input.wasm")
+            .build_and_sign_ed25519(
+                output,
+                "output.wasm",
+                invalid_key,
+                None,
+            );
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid Ed25519 secret key"));
     }
 }

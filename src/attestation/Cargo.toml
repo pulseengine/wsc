@@ -21,4 +21,21 @@ hex = "0.4"
 getrandom = "0.3"
 sha2 = "0.10"  # Proper SHA-256 for artifact hashing
 
+# Optional signing support - enables build_and_sign_ed25519() method
+ed25519-compact = { version = "2.1", optional = true }
+ct-codecs = { version = "1.1", optional = true }  # Base64 encoding
+
+# Optional: Official standards crates (adds more dependencies)
+# Enable with "standards" feature for full SLSA/DSSE/in-toto support
+in_toto_attestation = { version = "0.1", optional = true }
+
+[features]
+default = []
+# Enable Ed25519 signing for attestations
+# Tools can enable this to sign their attestations with external keys
+signing = ["ed25519-compact", "ct-codecs"]
+# Enable official in-toto/SLSA/DSSE types from standards bodies
+# Use this when you need full standards compliance
+standards = ["in_toto_attestation"]
+
 [dev-dependencies]

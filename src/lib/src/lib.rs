@@ -58,6 +58,13 @@ pub mod airgapped;
 /// Supports JSON output for SIEM integration.
 pub mod audit;
 
+/// Supply chain verification policy engine
+///
+/// Provides a TOML-based policy engine for enforcing SLSA levels and
+/// supply chain security policies on WebAssembly transformation chains.
+/// Supports per-rule enforcement modes (strict vs report).
+pub mod policy;
+
 #[allow(unused_imports)]
 pub use error::*;
 #[allow(unused_imports)]

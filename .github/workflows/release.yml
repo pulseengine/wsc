@@ -21,6 +21,27 @@ env:
   RUST_VERSION: "1.90.0"
 
 jobs:
+  publish-crates:
+    if: github.repository == 'pulseengine/wsc'
+    name: Publish Rust Crates
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Required for trusted publishing
+      contents: read
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      run: rustup update stable && rustup default stable
+    
+    - name: Build publish script
+      run: rustc scripts/publish.rs
+    
+    - name: Publish crates to crates.io
+      run: ./publish publish
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
   build-and-release:
     name: Build & Release WASM Component
     runs-on: ubuntu-latest
@@ -28,6 +49,7 @@ jobs:
       contents: write
       packages: write
       id-token: write  # For Cosign keyless signing
+    needs: publish-crates
 
     steps:
     - name: Checkout code

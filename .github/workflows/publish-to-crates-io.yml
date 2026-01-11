@@ -1,0 +1,37 @@
+# The purpose of this workflow is to publish the workspace's crates
+# whenever a tag is created. This uses GitHub Actions OIDC tokens for
+# trusted publishing instead of long-lived API tokens.
+
+name: "Publish to crates.io"
+
+on:
+  push:
+    tags:
+    - 'v*'
+
+jobs:
+  publish:
+    if: github.repository == 'pulseengine/wsc'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Required for trusted publishing
+      contents: read
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      run: rustup update stable && rustup default stable
+    
+    - name: Build publish script
+      run: rustc scripts/publish.rs
+    
+    - name: Authenticate with crates.io
+      uses: rust-lang/crates-io-auth-action@v1
+      id: auth
+      with:
+        crates-io-token: ${{ secrets.CRATES_IO_TOKEN }}
+    
+    - name: Publish crates
+      run: ./publish publish
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

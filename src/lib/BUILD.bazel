@@ -46,11 +46,13 @@ rust_library(
         "@wsc_deps//:ureq-3.1.2",
         "@wsc_deps//:webpki-roots",
         "@wsc_deps//:x509-parser",
-        # Certificate provisioning dependencies
-        "@wsc_deps//:rcgen",
-        "@wsc_deps//:uuid",
-        "@wsc_deps//:zeroize",
-    ],
+         # Certificate provisioning dependencies
+         "@wsc_deps//:rcgen",
+         "@wsc_deps//:uuid",
+         "@wsc_deps//:zeroize",
+         # Policy file parsing (TOML format)
+         "@wsc_deps//:toml",
+     ],
 )
 
 exports_files(["Cargo.toml"])

@@ -5,6 +5,14 @@ use wsc::airgapped::{
     fetch_sigstore_trusted_root, trusted_root_to_bundle, SIGSTORE_TRUSTED_ROOT_URL,
 };
 use wsc::audit::{self, AuditConfig, LogDestination};
+use wsc::composition::{
+    extract_transformation_attestation, extract_all_transformation_attestations,
+    extract_transformation_audit_trail, embed_transformation_attestation,
+    TransformationAttestation, TransformationAttestationBuilder, TransformationType,
+    ChainVerificationPolicy, ChainVerificationMode, TrustedToolInfo, TrustedPublicKey,
+    verify_transformation_chain,
+};
+use wsc::policy::{Policy, Enforcement, evaluate_policy};
 
 use wsc::reexports::log;
 
@@ -452,6 +460,121 @@ fn start() -> Result<(), WSError> {
                         ),
                 ),
         )
+        .subcommand(
+            Command::new("show-chain")
+                .about("Display transformation chain from a module")
+                .arg(
+                    Arg::new("in")
+                        .value_name("input_file")
+                        .long("input-file")
+                        .short('i')
+                        .required(true)
+                        .help("Input WASM file"),
+                )
+                .arg(
+                    Arg::new("json")
+                        .long("json")
+                        .action(ArgAction::SetTrue)
+                        .help("Output as JSON"),
+                ),
+        )
+        .subcommand(
+            Command::new("verify-chain")
+                .about("Verify transformation attestation chain")
+                .arg(
+                    Arg::new("in")
+                        .value_name("input_file")
+                        .long("input-file")
+                        .short('i')
+                        .required(true)
+                        .help("Input WASM file"),
+                )
+                .arg(
+                    Arg::new("policy")
+                        .long("policy")
+                        .short('p')
+                        .value_name("FILE")
+                        .help("TOML policy file for SLSA-aware verification"),
+                )
+                .arg(
+                    Arg::new("trusted_tools")
+                        .long("trusted-tools")
+                        .value_name("FILE")
+                        .help("JSON file with trusted tools configuration (legacy)"),
+                )
+                .arg(
+                    Arg::new("require_signatures")
+                        .long("require-signatures")
+                        .action(ArgAction::SetTrue)
+                        .help("Require all root inputs to be signed"),
+                )
+                .arg(
+                    Arg::new("max_age")
+                        .long("max-age-days")
+                        .value_name("DAYS")
+                        .help("Maximum age of attestations in days"),
+                )
+                .arg(
+                    Arg::new("require_attestation_signatures")
+                        .long("require-attestation-signatures")
+                        .action(ArgAction::SetTrue)
+                        .help("Require attestations to be signed and verify against trusted public keys"),
+                )
+                .arg(
+                    Arg::new("strict")
+                        .long("strict")
+                        .action(ArgAction::SetTrue)
+                        .help("Override all policy rules to strict enforcement"),
+                )
+                .arg(
+                    Arg::new("report_only")
+                        .long("report-only")
+                        .action(ArgAction::SetTrue)
+                        .help("Override all policy rules to report-only mode (no failures)"),
+                ),
+        )
+        .subcommand(
+            Command::new("attest")
+                .about("Record a transformation attestation")
+                .arg(
+                    Arg::new("in")
+                        .value_name("input_file")
+                        .long("input-file")
+                        .short('i')
+                        .required(true)
+                        .help("Input WASM file (before transformation)"),
+                )
+                .arg(
+                    Arg::new("out")
+                        .value_name("output_file")
+                        .long("output-file")
+                        .short('o')
+                        .required(true)
+                        .help("Output WASM file (after transformation, attestation will be embedded)"),
+                )
+                .arg(
+                    Arg::new("tool_name")
+                        .long("tool-name")
+                        .value_name("NAME")
+                        .required(true)
+                        .help("Name of the transformation tool"),
+                )
+                .arg(
+                    Arg::new("tool_version")
+                        .long("tool-version")
+                        .value_name("VERSION")
+                        .required(true)
+                        .help("Version of the transformation tool"),
+                )
+                .arg(
+                    Arg::new("type")
+                        .long("type")
+                        .value_name("TYPE")
+                        .value_parser(["optimization", "composition", "instrumentation", "stripping", "custom"])
+                        .default_value("custom")
+                        .help("Type of transformation"),
+                ),
+        )
         .get_matches();
 
     let verbose = matches.get_flag("verbose");
@@ -756,6 +879,12 @@ fn start() -> Result<(), WSError> {
         }
     } else if let Some(matches) = matches.subcommand_matches("bundle") {
         handle_bundle_command(matches, verbose)?;
+    } else if let Some(matches) = matches.subcommand_matches("show-chain") {
+        handle_show_chain_command(matches)?;
+    } else if let Some(matches) = matches.subcommand_matches("verify-chain") {
+        handle_verify_chain_command(matches)?;
+    } else if let Some(matches) = matches.subcommand_matches("attest") {
+        handle_attest_command(matches)?;
     } else {
         return Err(WSError::UsageError("No subcommand specified"));
     }
@@ -1086,6 +1215,377 @@ fn handle_bundle_command(matches: &clap::ArgMatches, verbose: bool) -> Result<()
     }
 
     Ok(())
+}
+
+/// Handle show-chain command - display transformation attestation chain
+fn handle_show_chain_command(matches: &clap::ArgMatches) -> Result<(), WSError> {
+    let input_file = matches
+        .get_one::<String>("in")
+        .map(|s| s.as_str())
+        .ok_or(WSError::UsageError("Missing input file"))?;
+
+    let as_json = matches.get_flag("json");
+
+    // Read the module
+    let module = Module::deserialize_from_file(input_file)?;
+
+    // Try to extract audit trail first (full chain)
+    if let Ok(Some(audit_trail)) = extract_transformation_audit_trail(&module) {
+        if as_json {
+            let json = audit_trail.to_json().map_err(|e| {
+                WSError::InternalError(format!("Failed to serialize audit trail: {}", e))
+            })?;
+            println!("{}", json);
+        } else {
+            println!("Transformation Audit Trail");
+            println!("==========================");
+            println!("Final artifact:");
+            println!("  Hash: {}", audit_trail.artifact.hash);
+            println!("  Size: {} bytes", audit_trail.artifact.size);
+            println!();
+            println!("Transformations ({}):", audit_trail.transformations.len());
+            for (i, attestation) in audit_trail.transformations.iter().enumerate() {
+                println!("  [{}] {} v{}", i + 1, attestation.tool.name, attestation.tool.version);
+                println!("      Type: {}", attestation.transformation_type);
+                println!("      Timestamp: {}", attestation.timestamp);
+                println!("      Inputs: {}", attestation.inputs.len());
+                println!("      Output hash: {}", attestation.output.hash);
+            }
+            println!();
+            println!("Root components ({}):", audit_trail.root_components.len());
+            for (i, root) in audit_trail.root_components.iter().enumerate() {
+                println!("  [{}] {}", i + 1, root.artifact.name);
+                println!("      Hash: {}", root.artifact.hash);
+                println!("      Signature: {} ({})",
+                    root.signature_info.key_id.as_deref().unwrap_or("unknown"),
+                    root.signature_info.algorithm);
+            }
+        }
+        return Ok(());
+    }
+
+    // Try to extract all transformation attestations
+    let attestations = extract_all_transformation_attestations(&module)?;
+
+    if attestations.is_empty() {
+        println!("No transformation attestations found in module.");
+        return Ok(());
+    }
+
+    if as_json {
+        let json = serde_json::to_string_pretty(&attestations).map_err(|e| {
+            WSError::InternalError(format!("Failed to serialize attestations: {}", e))
+        })?;
+        println!("{}", json);
+    } else {
+        println!("Transformation Attestations");
+        println!("===========================");
+        for (i, attestation) in attestations.iter().enumerate() {
+            println!("[{}] {} v{}", i + 1, attestation.tool.name, attestation.tool.version);
+            println!("    ID: {}", attestation.attestation_id);
+            println!("    Type: {}", attestation.transformation_type);
+            println!("    Timestamp: {}", attestation.timestamp);
+            println!("    Inputs: {}", attestation.inputs.len());
+            for (j, input) in attestation.inputs.iter().enumerate() {
+                println!("      [{}] {} ({})", j + 1, input.artifact.hash, input.signature_status);
+            }
+            println!("    Output: {}", attestation.output.hash);
+            println!();
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle verify-chain command - verify transformation attestation chain
+fn handle_verify_chain_command(matches: &clap::ArgMatches) -> Result<(), WSError> {
+    let input_file = matches
+        .get_one::<String>("in")
+        .map(|s| s.as_str())
+        .ok_or(WSError::UsageError("Missing input file"))?;
+
+    let policy_file = matches.get_one::<String>("policy").map(|s| s.as_str());
+    let trusted_tools_file = matches.get_one::<String>("trusted_tools").map(|s| s.as_str());
+    let require_signatures = matches.get_flag("require_signatures");
+    let require_attestation_signatures = matches.get_flag("require_attestation_signatures");
+    let strict_mode = matches.get_flag("strict");
+    let report_only = matches.get_flag("report_only");
+    let max_age_days = matches.get_one::<String>("max_age")
+        .and_then(|s| s.parse::<u64>().ok());
+
+    // Read the module
+    let module = Module::deserialize_from_file(input_file)?;
+
+    // Extract attestation from module
+    let attestation = extract_transformation_attestation(&module)?
+        .ok_or(WSError::InternalError("No transformation attestation found in module".to_string()))?;
+
+    // If a policy file is provided, use the new policy engine
+    if let Some(policy_path) = policy_file {
+        return handle_policy_verification(&attestation, policy_path, strict_mode, report_only);
+    }
+
+    // Build verification policy
+    let mut policy = ChainVerificationPolicy::default();
+
+    if require_signatures {
+        policy.mode = ChainVerificationMode::AllInputsSigned;
+    } else {
+        // Default to lenient if not requiring signatures
+        policy.mode = ChainVerificationMode::NoRootSignaturesRequired;
+    }
+
+    if let Some(days) = max_age_days {
+        policy.max_attestation_age = Some(std::time::Duration::from_secs(days * 86400));
+    }
+
+    // Enable attestation signature verification if flag is set
+    policy.verify_attestation_signatures = require_attestation_signatures;
+
+    // Load trusted tools if specified
+    if let Some(tools_file) = trusted_tools_file {
+        let tools_data = std::fs::read_to_string(tools_file).map_err(|e| {
+            WSError::InternalError(format!("Failed to read trusted tools '{}': {}", tools_file, e))
+        })?;
+        // Parse as a map of tool name -> tool config with optional public keys
+        let tools_json: serde_json::Value = serde_json::from_str(&tools_data).map_err(|e| {
+            WSError::InternalError(format!("Failed to parse trusted tools: {}", e))
+        })?;
+
+        if let Some(obj) = tools_json.as_object() {
+            for (name, value) in obj {
+                let mut info = if let Some(min_ver) = value.get("min_version").and_then(|v| v.as_str()) {
+                    TrustedToolInfo::min_version(min_ver)
+                } else {
+                    TrustedToolInfo::any_version()
+                };
+
+                // Parse public keys if present
+                // Format: "public_keys": [{"algorithm": "ed25519", "key": "base64...", "key_id": "optional"}]
+                if let Some(public_keys) = value.get("public_keys").and_then(|v| v.as_array()) {
+                    for pk in public_keys {
+                        let algorithm = pk.get("algorithm").and_then(|v| v.as_str()).unwrap_or("ed25519");
+                        if let Some(key) = pk.get("key").and_then(|v| v.as_str()) {
+                            let key_id = pk.get("key_id").and_then(|v| v.as_str()).map(String::from);
+                            info.public_keys.push(TrustedPublicKey {
+                                algorithm: algorithm.to_string(),
+                                key: key.to_string(),
+                                key_id,
+                            });
+                        }
+                    }
+                }
+
+                policy.trusted_tools.insert(name.clone(), info);
+            }
+        }
+    }
+
+    // Verify chain
+    let result = verify_transformation_chain(&attestation, &policy);
+
+    if result.valid {
+        println!("✓ Transformation chain is valid");
+        println!();
+        println!("Transformation stages: {}", result.transformation_count);
+        println!("Tools used: {}", result.tools_used.join(", "));
+        if !result.root_components.is_empty() {
+            println!();
+            println!("Root components: {}", result.root_components.len());
+            for (i, root) in result.root_components.iter().enumerate() {
+                println!("  [{}] {}", i + 1, root);
+            }
+        }
+        if !result.warnings.is_empty() {
+            println!();
+            println!("Warnings:");
+            for warning in &result.warnings {
+                println!("  - {}", warning);
+            }
+        }
+    } else {
+        eprintln!("✗ Transformation chain verification failed");
+        if !result.errors.is_empty() {
+            eprintln!();
+            eprintln!("Errors:");
+            for err in &result.errors {
+                eprintln!("  - {}", err);
+            }
+        }
+        return Err(WSError::VerificationFailed);
+    }
+
+    Ok(())
+}
+
+/// Handle attest command - record a transformation attestation
+fn handle_attest_command(matches: &clap::ArgMatches) -> Result<(), WSError> {
+    let input_file = matches
+        .get_one::<String>("in")
+        .map(|s| s.as_str())
+        .ok_or(WSError::UsageError("Missing input file"))?;
+
+    let output_file = matches
+        .get_one::<String>("out")
+        .map(|s| s.as_str())
+        .ok_or(WSError::UsageError("Missing output file"))?;
+
+    let tool_name = matches
+        .get_one::<String>("tool_name")
+        .map(|s| s.as_str())
+        .ok_or(WSError::UsageError("Missing tool name"))?;
+
+    let tool_version = matches
+        .get_one::<String>("tool_version")
+        .map(|s| s.as_str())
+        .ok_or(WSError::UsageError("Missing tool version"))?;
+
+    let transform_type = matches
+        .get_one::<String>("type")
+        .map(|s| s.as_str())
+        .unwrap_or("custom");
+
+    // Parse transformation type
+    let transformation_type = match transform_type {
+        "optimization" => TransformationType::Optimization,
+        "composition" => TransformationType::Composition,
+        "instrumentation" => TransformationType::Instrumentation,
+        "stripping" => TransformationType::Stripping,
+        _ => TransformationType::Custom,
+    };
+
+    // Read input module (the original, before transformation)
+    let input_bytes = std::fs::read(input_file).map_err(|e| {
+        WSError::InternalError(format!("Failed to read input '{}': {}", input_file, e))
+    })?;
+
+    // Read output module (the transformed result)
+    let output_bytes = std::fs::read(output_file).map_err(|e| {
+        WSError::InternalError(format!("Failed to read output '{}': {}", output_file, e))
+    })?;
+
+    // Build attestation using the builder pattern
+    let builder = match transformation_type {
+        TransformationType::Optimization => {
+            TransformationAttestationBuilder::new_optimization(tool_name, tool_version)
+        }
+        TransformationType::Composition => {
+            TransformationAttestationBuilder::new_composition(tool_name, tool_version)
+        }
+        TransformationType::Instrumentation => {
+            TransformationAttestationBuilder::new_instrumentation(tool_name, tool_version)
+        }
+        _ => TransformationAttestationBuilder::new(transformation_type, tool_name, tool_version),
+    };
+
+    // Add input and build attestation
+    let attestation = builder
+        .add_input_unsigned(&input_bytes, input_file)
+        .build(&output_bytes, output_file);
+
+    // Parse output as Module and embed attestation
+    let output_module = Module::deserialize_from_file(output_file)?;
+    let with_attestation = embed_transformation_attestation(output_module, &attestation)?;
+
+    // Serialize and write output with attestation
+    with_attestation.serialize_to_file(output_file)?;
+
+    // Get output file size for reporting
+    let output_size = std::fs::metadata(output_file)
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    println!("Transformation attestation recorded:");
+    println!("  ID: {}", attestation.attestation_id);
+    println!("  Tool: {} v{}", attestation.tool.name, attestation.tool.version);
+    println!("  Type: {}", attestation.transformation_type);
+    println!("  Input: {} ({} bytes)", input_file, input_bytes.len());
+    println!("  Output: {} ({} bytes)", output_file, output_size);
+    println!();
+    println!("Attestation embedded in: {}", output_file);
+
+    Ok(())
+}
+
+/// Handle policy-based verification using the new SLSA-aware policy engine
+fn handle_policy_verification(
+    attestation: &TransformationAttestation,
+    policy_path: &str,
+    strict_mode: bool,
+    report_only: bool,
+) -> Result<(), WSError> {
+    // Load policy from TOML file
+    let mut policy = Policy::from_toml_file(policy_path).map_err(|e| {
+        WSError::InternalError(format!("Failed to load policy '{}': {}", policy_path, e))
+    })?;
+
+    // Apply enforcement overrides if specified
+    if strict_mode {
+        policy.policy.enforcement = Enforcement::Strict;
+        policy.slsa.enforcement = Some(Enforcement::Strict);
+        policy.signatures.enforcement = Some(Enforcement::Strict);
+    } else if report_only {
+        policy.policy.enforcement = Enforcement::Report;
+        policy.slsa.enforcement = Some(Enforcement::Report);
+        policy.signatures.enforcement = Some(Enforcement::Report);
+    }
+
+    // Evaluate the policy
+    let result = evaluate_policy(attestation, &policy);
+
+    // Display results
+    println!("Policy: {} v{}", policy.policy.name, policy.policy.version);
+    println!("SLSA Level: {}", result.slsa_level);
+    println!();
+
+    // Show rule results
+    println!("Rule Results:");
+    for rule in &result.rules {
+        let icon = if rule.passed { "✓" } else { "✗" };
+        let mode = match rule.enforcement {
+            Enforcement::Strict => "",
+            Enforcement::Report => " [report]",
+        };
+        println!("  {} {}{}: {}", icon, rule.rule, mode, rule.message);
+        if let Some(ref details) = rule.details {
+            println!("      {}", details);
+        }
+    }
+    println!();
+
+    // Summary
+    println!("Summary:");
+    println!("  Rules evaluated: {}", result.summary.total_rules);
+    println!("  Passed: {}", result.summary.passed);
+    if result.summary.failed_strict > 0 {
+        println!("  Failed (strict): {}", result.summary.failed_strict);
+    }
+    if result.summary.failed_report > 0 {
+        println!("  Warnings: {}", result.summary.failed_report);
+    }
+    if !result.summary.tools_verified.is_empty() {
+        println!("  Tools verified: {}", result.summary.tools_verified.join(", "));
+    }
+
+    // SLSA improvement suggestions
+    let suggestions = result.slsa_suggestions();
+    if !suggestions.is_empty() {
+        println!();
+        println!("To reach next SLSA level:");
+        for suggestion in suggestions {
+            println!("  - {}", suggestion);
+        }
+    }
+
+    // Overall result
+    println!();
+    if result.passed {
+        println!("✓ Policy evaluation PASSED");
+        Ok(())
+    } else {
+        eprintln!("✗ Policy evaluation FAILED");
+        Err(WSError::VerificationFailed)
+    }
 }
 
 /// Format Unix timestamp as human-readable date

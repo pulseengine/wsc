@@ -1,0 +1,15 @@
+# Development Policy - Permissive for local development
+#
+# Use: wsc verify-chain -i app.wasm --policy development.toml
+
+[policy]
+name = "development"
+version = "1.0"
+enforcement = "report"  # Warnings only, never fails
+
+[slsa]
+minimum_level = 0  # No SLSA requirements
+
+[signatures]
+require_root_signatures = false
+require_attestation_signatures = false

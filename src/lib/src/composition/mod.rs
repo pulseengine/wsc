@@ -1684,6 +1684,37 @@ pub enum ChainVerificationMode {
     NoRootSignaturesRequired,
 }
 
+/// A trusted public key for attestation verification
+#[derive(Debug, Clone)]
+pub struct TrustedPublicKey {
+    /// Algorithm (e.g., "ed25519", "ecdsa-p256")
+    pub algorithm: String,
+    /// Base64-encoded public key bytes
+    pub key: String,
+    /// Optional key identifier for matching against attestation key_id
+    pub key_id: Option<String>,
+}
+
+impl TrustedPublicKey {
+    /// Create a new Ed25519 trusted public key
+    pub fn ed25519(key: impl Into<String>, key_id: Option<String>) -> Self {
+        Self {
+            algorithm: "ed25519".to_string(),
+            key: key.into(),
+            key_id,
+        }
+    }
+}
+
+/// Configuration for keyless (OIDC/Sigstore) attestation verification
+#[derive(Debug, Clone, Default)]
+pub struct KeylessVerificationConfig {
+    /// Trusted OIDC issuers (e.g., "https://token.actions.githubusercontent.com")
+    pub oidc_issuers: Vec<String>,
+    /// Allowed subject patterns (glob patterns, e.g., "https://github.com/org/repo/*")
+    pub allowed_subjects: Vec<String>,
+}
+
 /// Information about a trusted transformation tool
 #[derive(Debug, Clone)]
 pub struct TrustedToolInfo {
@@ -1693,6 +1724,10 @@ pub struct TrustedToolInfo {
     pub max_version: Option<String>,
     /// Optional: Required tool hash for exact matching
     pub required_hash: Option<String>,
+    /// Trusted public keys for this tool's attestation signatures
+    pub public_keys: Vec<TrustedPublicKey>,
+    /// Keyless verification config (for Sigstore/OIDC-based signing)
+    pub keyless: Option<KeylessVerificationConfig>,
 }
 
 impl TrustedToolInfo {
@@ -1702,6 +1737,8 @@ impl TrustedToolInfo {
             min_version: None,
             max_version: None,
             required_hash: None,
+            public_keys: Vec::new(),
+            keyless: None,
         }
     }
 
@@ -1711,7 +1748,21 @@ impl TrustedToolInfo {
             min_version: Some(version.into()),
             max_version: None,
             required_hash: None,
+            public_keys: Vec::new(),
+            keyless: None,
         }
+    }
+
+    /// Add a trusted public key for attestation verification
+    pub fn with_public_key(mut self, key: TrustedPublicKey) -> Self {
+        self.public_keys.push(key);
+        self
+    }
+
+    /// Add keyless verification config
+    pub fn with_keyless(mut self, config: KeylessVerificationConfig) -> Self {
+        self.keyless = Some(config);
+        self
     }
 
     /// Check if a tool version satisfies this constraint
@@ -1861,6 +1912,155 @@ impl ChainVerificationResult {
     }
 }
 
+/// Result of verifying an attestation signature
+#[derive(Debug, Clone)]
+pub enum AttestationSignatureResult {
+    /// Signature verified successfully against a trusted key
+    Verified {
+        key_id: Option<String>,
+        algorithm: String,
+    },
+    /// Attestation is unsigned (algorithm = "unsigned")
+    Unsigned,
+    /// Signature verification failed
+    Invalid(String),
+    /// No matching trusted key found
+    NoMatchingKey,
+}
+
+/// Verify an attestation signature against trusted public keys
+///
+/// This function verifies that the attestation was signed by one of the
+/// trusted public keys for the tool.
+///
+/// # Arguments
+/// * `attestation` - The attestation to verify
+/// * `trusted_keys` - List of trusted public keys for this tool
+///
+/// # Returns
+/// * `AttestationSignatureResult` indicating the verification result
+pub fn verify_attestation_signature(
+    attestation: &TransformationAttestation,
+    trusted_keys: &[TrustedPublicKey],
+) -> AttestationSignatureResult {
+    use ct_codecs::{Base64, Decoder};
+    use ed25519_compact::{PublicKey, Signature};
+
+    let sig = &attestation.attestation_signature;
+
+    // Check if unsigned
+    if sig.algorithm == "unsigned" || sig.signature.is_empty() {
+        return AttestationSignatureResult::Unsigned;
+    }
+
+    // Currently only support Ed25519
+    if sig.algorithm != "ed25519" {
+        return AttestationSignatureResult::Invalid(format!(
+            "Unsupported signature algorithm: {}",
+            sig.algorithm
+        ));
+    }
+
+    // Decode the signature
+    let signature_bytes = match Base64::decode_to_vec(&sig.signature, None) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return AttestationSignatureResult::Invalid(format!(
+                "Failed to decode signature: {}",
+                e
+            ));
+        }
+    };
+
+    let signature = match Signature::from_slice(&signature_bytes) {
+        Ok(sig) => sig,
+        Err(e) => {
+            return AttestationSignatureResult::Invalid(format!(
+                "Invalid signature format: {}",
+                e
+            ));
+        }
+    };
+
+    // Recreate the canonical message that was signed
+    // (attestation with empty signature field)
+    let mut attestation_for_signing = attestation.clone();
+    attestation_for_signing.attestation_signature.signature = String::new();
+    let canonical = match serde_json::to_string(&attestation_for_signing) {
+        Ok(json) => json,
+        Err(e) => {
+            return AttestationSignatureResult::Invalid(format!(
+                "Failed to serialize attestation: {}",
+                e
+            ));
+        }
+    };
+
+    // Try to verify against each trusted key
+    for trusted_key in trusted_keys {
+        // Skip keys with wrong algorithm
+        if trusted_key.algorithm != "ed25519" {
+            continue;
+        }
+
+        // If key_id is specified, it must match
+        if let Some(ref trusted_key_id) = trusted_key.key_id {
+            if let Some(ref attestation_key_id) = sig.key_id {
+                if trusted_key_id != attestation_key_id {
+                    continue;
+                }
+            }
+        }
+
+        // Decode the trusted public key
+        let pk_bytes = match Base64::decode_to_vec(&trusted_key.key, None) {
+            Ok(bytes) => bytes,
+            Err(_) => continue, // Skip malformed keys
+        };
+
+        let public_key = match PublicKey::from_slice(&pk_bytes) {
+            Ok(pk) => pk,
+            Err(_) => continue, // Skip malformed keys
+        };
+
+        // Verify the signature
+        if public_key.verify(canonical.as_bytes(), &signature).is_ok() {
+            return AttestationSignatureResult::Verified {
+                key_id: sig.key_id.clone(),
+                algorithm: sig.algorithm.clone(),
+            };
+        }
+    }
+
+    // Also try verification with the embedded public key if present
+    // (useful for self-signed attestations where the verifier trusts the public key)
+    if let Some(ref embedded_pk) = sig.public_key {
+        let pk_bytes = match Base64::decode_to_vec(embedded_pk, None) {
+            Ok(bytes) => bytes,
+            Err(_) => return AttestationSignatureResult::NoMatchingKey,
+        };
+
+        let public_key = match PublicKey::from_slice(&pk_bytes) {
+            Ok(pk) => pk,
+            Err(_) => return AttestationSignatureResult::NoMatchingKey,
+        };
+
+        // Check if this public key is in the trusted list
+        for trusted_key in trusted_keys {
+            if trusted_key.key == *embedded_pk && trusted_key.algorithm == "ed25519" {
+                if public_key.verify(canonical.as_bytes(), &signature).is_ok() {
+                    return AttestationSignatureResult::Verified {
+                        key_id: sig.key_id.clone(),
+                        algorithm: sig.algorithm.clone(),
+                    };
+                }
+            }
+        }
+    }
+
+    AttestationSignatureResult::NoMatchingKey
+}
+
 /// Verify a transformation chain against a policy
 ///
 /// This walks through the attestation chain and verifies:
@@ -1868,6 +2068,7 @@ impl ChainVerificationResult {
 /// 2. Attestation timestamps are within bounds
 /// 3. Root inputs have valid signatures (according to policy)
 /// 4. Hash chains are consistent (no gaps)
+/// 5. Attestation signatures (if policy.verify_attestation_signatures is true)
 pub fn verify_transformation_chain(
     attestation: &TransformationAttestation,
     policy: &ChainVerificationPolicy,
@@ -1902,8 +2103,9 @@ fn verify_attestation_recursive(
     }
 
     // Verify tool is trusted
-    if let Some(tool_info) = policy.trusted_tools.get(tool_name) {
-        if !tool_info.satisfies(&attestation.tool.version, attestation.tool.tool_hash.as_deref()) {
+    let tool_info = policy.trusted_tools.get(tool_name);
+    if let Some(info) = tool_info {
+        if !info.satisfies(&attestation.tool.version, attestation.tool.tool_hash.as_deref()) {
             result.add_error(format!(
                 "Tool '{}' version '{}' does not meet policy requirements",
                 tool_name, attestation.tool.version
@@ -1912,6 +2114,53 @@ fn verify_attestation_recursive(
     } else if !policy.trusted_tools.is_empty() {
         // If trusted_tools is specified, tool must be in the list
         result.add_error(format!("Tool '{}' is not in trusted tools list", tool_name));
+    }
+
+    // Verify attestation signature if policy requires it
+    if policy.verify_attestation_signatures {
+        // Get trusted keys for this tool
+        let trusted_keys = tool_info
+            .map(|info| info.public_keys.as_slice())
+            .unwrap_or(&[]);
+
+        if trusted_keys.is_empty() && tool_info.is_some() {
+            // Tool is trusted but has no public keys configured - warn
+            result.add_warning(format!(
+                "Tool '{}' has no public keys configured for signature verification",
+                tool_name
+            ));
+        }
+
+        // Verify the signature
+        match verify_attestation_signature(attestation, trusted_keys) {
+            AttestationSignatureResult::Verified { key_id, algorithm } => {
+                // Signature valid - this is the expected case
+                log::debug!(
+                    "Attestation signature verified for tool '{}' (algorithm: {}, key_id: {:?})",
+                    tool_name,
+                    algorithm,
+                    key_id
+                );
+            }
+            AttestationSignatureResult::Unsigned => {
+                result.add_error(format!(
+                    "Tool '{}' attestation is unsigned but signature verification is required",
+                    tool_name
+                ));
+            }
+            AttestationSignatureResult::Invalid(reason) => {
+                result.add_error(format!(
+                    "Tool '{}' attestation signature is invalid: {}",
+                    tool_name, reason
+                ));
+            }
+            AttestationSignatureResult::NoMatchingKey => {
+                result.add_error(format!(
+                    "Tool '{}' attestation signature does not match any trusted public key",
+                    tool_name
+                ));
+            }
+        }
     }
 
     // Verify attestation timestamp if policy has age limit
@@ -4414,5 +4663,95 @@ mod tests {
             deserialized.device_attestation.as_ref().unwrap().device_id,
             "device-1"
         );
+    }
+
+    #[test]
+    fn test_verify_attestation_signature_unsigned() {
+        // Create an unsigned attestation
+        let attestation = TransformationAttestationBuilder::new_optimization("loom", "0.1.0")
+            .add_input_unsigned(b"test input", "input.wasm")
+            .build(b"test output", "output.wasm");
+
+        // Verify that unsigned attestation returns Unsigned
+        let result = verify_attestation_signature(&attestation, &[]);
+        assert!(matches!(result, AttestationSignatureResult::Unsigned));
+    }
+
+    #[test]
+    fn test_trusted_public_key_creation() {
+        let pk = TrustedPublicKey::ed25519("AAAA", Some("test-key".to_string()));
+        assert_eq!(pk.algorithm, "ed25519");
+        assert_eq!(pk.key, "AAAA");
+        assert_eq!(pk.key_id, Some("test-key".to_string()));
+    }
+
+    #[test]
+    fn test_trusted_tool_info_with_public_key() {
+        let info = TrustedToolInfo::min_version("0.1.0")
+            .with_public_key(TrustedPublicKey::ed25519("key1", Some("id1".to_string())))
+            .with_public_key(TrustedPublicKey::ed25519("key2", None));
+
+        assert_eq!(info.min_version, Some("0.1.0".to_string()));
+        assert_eq!(info.public_keys.len(), 2);
+        assert_eq!(info.public_keys[0].key, "key1");
+        assert_eq!(info.public_keys[1].key, "key2");
+    }
+
+    #[test]
+    fn test_chain_verification_with_attestation_signatures_unsigned() {
+        // Create an unsigned attestation
+        let attestation = TransformationAttestationBuilder::new_optimization("loom", "0.1.0")
+            .add_input_unsigned(b"test input", "input.wasm")
+            .build(b"test output", "output.wasm");
+
+        // Create a policy requiring attestation signatures
+        let mut policy = ChainVerificationPolicy::default();
+        policy.mode = ChainVerificationMode::NoRootSignaturesRequired;
+        policy.verify_attestation_signatures = true;
+        policy.trusted_tools.insert(
+            "loom".to_string(),
+            TrustedToolInfo::min_version("0.1.0")
+                .with_public_key(TrustedPublicKey::ed25519("dummy", None)),
+        );
+
+        // Verify should fail because attestation is unsigned
+        let result = verify_transformation_chain(&attestation, &policy);
+        assert!(!result.valid);
+        assert!(result.errors.iter().any(|e| e.contains("unsigned")));
+    }
+
+    #[test]
+    fn test_chain_verification_without_signature_requirement() {
+        // Create an unsigned attestation
+        let attestation = TransformationAttestationBuilder::new_optimization("loom", "0.1.0")
+            .add_input_unsigned(b"test input", "input.wasm")
+            .build(b"test output", "output.wasm");
+
+        // Create a policy NOT requiring attestation signatures
+        let mut policy = ChainVerificationPolicy::default();
+        policy.mode = ChainVerificationMode::NoRootSignaturesRequired;
+        policy.verify_attestation_signatures = false;
+        policy.trusted_tools.insert(
+            "loom".to_string(),
+            TrustedToolInfo::min_version("0.1.0"),
+        );
+
+        // Verify should pass because signature verification is disabled
+        let result = verify_transformation_chain(&attestation, &policy);
+        assert!(result.valid);
+    }
+
+    #[test]
+    fn test_keyless_verification_config() {
+        let config = KeylessVerificationConfig {
+            oidc_issuers: vec!["https://token.actions.githubusercontent.com".to_string()],
+            allowed_subjects: vec!["https://github.com/org/repo/*".to_string()],
+        };
+
+        let info = TrustedToolInfo::min_version("0.1.0").with_keyless(config);
+        assert!(info.keyless.is_some());
+        let kl = info.keyless.unwrap();
+        assert_eq!(kl.oidc_issuers.len(), 1);
+        assert_eq!(kl.allowed_subjects.len(), 1);
     }
 }

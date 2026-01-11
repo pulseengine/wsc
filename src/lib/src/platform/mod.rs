@@ -41,6 +41,276 @@ use crate::error::WSError;
 use crate::signature::PublicKey;
 use std::fmt;
 
+// ============================================================================
+// Hardware Abstraction Traits for Attestation
+// ============================================================================
+// These traits provide a focused interface for attestation signing/verification.
+// They complement SecureKeyProvider with a simpler API for tools like Loom.
+
+/// Signing algorithm used by hardware signers
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SigningAlgorithm {
+    /// Ed25519 (EdDSA with Curve25519)
+    Ed25519,
+    /// ECDSA with P-256 curve (required by Sigstore/Fulcio)
+    EcdsaP256,
+    /// ECDSA with P-384 curve
+    EcdsaP384,
+}
+
+impl fmt::Display for SigningAlgorithm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SigningAlgorithm::Ed25519 => write!(f, "ed25519"),
+            SigningAlgorithm::EcdsaP256 => write!(f, "ecdsa-p256"),
+            SigningAlgorithm::EcdsaP384 => write!(f, "ecdsa-p384"),
+        }
+    }
+}
+
+/// Trait for hardware-backed attestation signing.
+///
+/// This is a simplified interface for tools (like Loom, WAC) to sign
+/// transformation attestations. It abstracts over:
+/// - Software keys (development)
+/// - TPM 2.0 (production Linux/Windows)
+/// - Secure Elements (IoT/embedded: ATECC608, SE050)
+/// - TrustZone (ARM)
+///
+/// # Example
+///
+/// ```ignore
+/// use wsc::platform::HardwareSigner;
+///
+/// fn sign_attestation(signer: &dyn HardwareSigner, attestation_json: &[u8]) -> Vec<u8> {
+///     signer.sign(attestation_json).expect("signing failed")
+/// }
+/// ```
+///
+/// # Security
+///
+/// Implementations MUST ensure private key material never leaves
+/// the secure boundary (hardware module or secure enclave).
+pub trait HardwareSigner: Send + Sync {
+    /// Sign data using the hardware-protected key.
+    ///
+    /// The signing operation is performed entirely within the secure
+    /// hardware boundary.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Data to sign (typically attestation JSON or PAE encoding)
+    ///
+    /// # Returns
+    ///
+    /// Raw signature bytes (format depends on algorithm)
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, HardwareError>;
+
+    /// Get the public key corresponding to this signer.
+    ///
+    /// Safe to expose - this is used for verification.
+    fn public_key(&self) -> Result<Vec<u8>, HardwareError>;
+
+    /// Get the signing algorithm.
+    fn algorithm(&self) -> SigningAlgorithm;
+
+    /// Get an optional key identifier.
+    ///
+    /// Used to help verifiers find the right public key.
+    fn key_id(&self) -> Option<String> {
+        None
+    }
+
+    /// Get the security level of this signer.
+    fn security_level(&self) -> SecurityLevel {
+        SecurityLevel::Software
+    }
+}
+
+/// Trait for hardware-accelerated verification.
+///
+/// This is important for embedded/constrained devices where software
+/// crypto may be too slow or where hardware acceleration is available.
+///
+/// # Use Cases
+///
+/// - Embedded devices with crypto accelerators
+/// - Secure elements that support verification
+/// - TPMs with policy-based verification
+///
+/// # Example
+///
+/// ```ignore
+/// use wsc::platform::HardwareVerifier;
+///
+/// fn verify_attestation(
+///     verifier: &dyn HardwareVerifier,
+///     data: &[u8],
+///     signature: &[u8],
+///     public_key: &[u8],
+/// ) -> bool {
+///     verifier.verify(data, signature, public_key).is_ok()
+/// }
+/// ```
+pub trait HardwareVerifier: Send + Sync {
+    /// Verify a signature using hardware acceleration.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Original data that was signed
+    /// * `signature` - Signature to verify
+    /// * `public_key` - Public key to verify against
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if signature is valid
+    /// - `Err(HardwareError::VerificationFailed)` if invalid
+    fn verify(&self, data: &[u8], signature: &[u8], public_key: &[u8]) -> Result<(), HardwareError>;
+
+    /// Get supported algorithms.
+    fn supported_algorithms(&self) -> Vec<SigningAlgorithm>;
+
+    /// Check if a specific algorithm is supported.
+    fn supports_algorithm(&self, algorithm: SigningAlgorithm) -> bool {
+        self.supported_algorithms().contains(&algorithm)
+    }
+}
+
+/// Errors from hardware operations.
+#[derive(Debug, Clone)]
+pub enum HardwareError {
+    /// Hardware not available or not initialized
+    NotAvailable(String),
+    /// Key not found
+    KeyNotFound(String),
+    /// Signing operation failed
+    SigningFailed(String),
+    /// Verification failed (signature invalid)
+    VerificationFailed(String),
+    /// Algorithm not supported by hardware
+    UnsupportedAlgorithm(SigningAlgorithm),
+    /// Hardware communication error
+    CommunicationError(String),
+    /// Access denied (permissions, policies)
+    AccessDenied(String),
+}
+
+impl fmt::Display for HardwareError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HardwareError::NotAvailable(msg) => write!(f, "Hardware not available: {}", msg),
+            HardwareError::KeyNotFound(msg) => write!(f, "Key not found: {}", msg),
+            HardwareError::SigningFailed(msg) => write!(f, "Signing failed: {}", msg),
+            HardwareError::VerificationFailed(msg) => write!(f, "Verification failed: {}", msg),
+            HardwareError::UnsupportedAlgorithm(alg) => {
+                write!(f, "Algorithm not supported: {}", alg)
+            }
+            HardwareError::CommunicationError(msg) => write!(f, "Communication error: {}", msg),
+            HardwareError::AccessDenied(msg) => write!(f, "Access denied: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for HardwareError {}
+
+/// Software implementation of HardwareSigner for development/testing.
+///
+/// This wraps an Ed25519 secret key and provides the HardwareSigner interface.
+/// **NOT suitable for production** - use only for testing and development.
+pub struct SoftwareEd25519Signer {
+    secret_key: ed25519_compact::SecretKey,
+    key_id: Option<String>,
+}
+
+impl SoftwareEd25519Signer {
+    /// Create from an existing Ed25519 secret key.
+    pub fn from_secret_key(secret_key: ed25519_compact::SecretKey, key_id: Option<String>) -> Self {
+        Self { secret_key, key_id }
+    }
+
+    /// Generate a new random keypair.
+    pub fn generate(key_id: Option<String>) -> Self {
+        let key_pair = ed25519_compact::KeyPair::generate();
+        Self {
+            secret_key: key_pair.sk,
+            key_id,
+        }
+    }
+}
+
+impl HardwareSigner for SoftwareEd25519Signer {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>, HardwareError> {
+        let signature = self.secret_key.sign(data, None);
+        Ok(signature.as_ref().to_vec())
+    }
+
+    fn public_key(&self) -> Result<Vec<u8>, HardwareError> {
+        Ok(self.secret_key.public_key().as_ref().to_vec())
+    }
+
+    fn algorithm(&self) -> SigningAlgorithm {
+        SigningAlgorithm::Ed25519
+    }
+
+    fn key_id(&self) -> Option<String> {
+        self.key_id.clone()
+    }
+
+    fn security_level(&self) -> SecurityLevel {
+        SecurityLevel::Software
+    }
+}
+
+/// Software implementation of HardwareVerifier for development/testing.
+pub struct SoftwareEd25519Verifier;
+
+impl SoftwareEd25519Verifier {
+    /// Create a new software verifier.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for SoftwareEd25519Verifier {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HardwareVerifier for SoftwareEd25519Verifier {
+    fn verify(&self, data: &[u8], signature: &[u8], public_key: &[u8]) -> Result<(), HardwareError> {
+        if signature.len() != 64 {
+            return Err(HardwareError::VerificationFailed(
+                "Invalid signature length (expected 64 bytes)".to_string(),
+            ));
+        }
+        if public_key.len() != 32 {
+            return Err(HardwareError::VerificationFailed(
+                "Invalid public key length (expected 32 bytes)".to_string(),
+            ));
+        }
+
+        let sig = ed25519_compact::Signature::from_slice(signature).map_err(|e| {
+            HardwareError::VerificationFailed(format!("Invalid signature format: {:?}", e))
+        })?;
+
+        let pk = ed25519_compact::PublicKey::from_slice(public_key).map_err(|e| {
+            HardwareError::VerificationFailed(format!("Invalid public key format: {:?}", e))
+        })?;
+
+        pk.verify(data, &sig)
+            .map_err(|_| HardwareError::VerificationFailed("Signature verification failed".to_string()))
+    }
+
+    fn supported_algorithms(&self) -> Vec<SigningAlgorithm> {
+        vec![SigningAlgorithm::Ed25519]
+    }
+}
+
+// ============================================================================
+// End Hardware Abstraction Traits
+// ============================================================================
+
 #[cfg(feature = "software-keys")]
 pub mod software;
 
@@ -440,6 +710,78 @@ pub fn list_available_providers() -> Vec<(String, Box<dyn SecureKeyProvider>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Hardware abstraction trait tests
+    #[test]
+    fn test_software_ed25519_signer() {
+        let signer = SoftwareEd25519Signer::generate(Some("test-key".to_string()));
+
+        // Test signing
+        let data = b"test data to sign";
+        let signature = signer.sign(data).expect("signing should succeed");
+        assert_eq!(signature.len(), 64, "Ed25519 signature should be 64 bytes");
+
+        // Test public key extraction
+        let public_key = signer.public_key().expect("public key should be available");
+        assert_eq!(public_key.len(), 32, "Ed25519 public key should be 32 bytes");
+
+        // Test key ID
+        assert_eq!(signer.key_id(), Some("test-key".to_string()));
+
+        // Test algorithm
+        assert_eq!(signer.algorithm(), SigningAlgorithm::Ed25519);
+
+        // Test security level
+        assert_eq!(signer.security_level(), SecurityLevel::Software);
+    }
+
+    #[test]
+    fn test_software_ed25519_verifier() {
+        let verifier = SoftwareEd25519Verifier::new();
+
+        // Generate a keypair for testing
+        let signer = SoftwareEd25519Signer::generate(None);
+        let data = b"test data for verification";
+        let signature = signer.sign(data).unwrap();
+        let public_key = signer.public_key().unwrap();
+
+        // Test successful verification
+        assert!(verifier.verify(data, &signature, &public_key).is_ok());
+
+        // Test failed verification with wrong data
+        assert!(verifier.verify(b"wrong data", &signature, &public_key).is_err());
+
+        // Test failed verification with corrupted signature
+        let mut bad_sig = signature.clone();
+        bad_sig[0] ^= 0xff;
+        assert!(verifier.verify(data, &bad_sig, &public_key).is_err());
+
+        // Test supported algorithms
+        let algorithms = verifier.supported_algorithms();
+        assert!(algorithms.contains(&SigningAlgorithm::Ed25519));
+        assert!(verifier.supports_algorithm(SigningAlgorithm::Ed25519));
+        assert!(!verifier.supports_algorithm(SigningAlgorithm::EcdsaP256));
+    }
+
+    #[test]
+    fn test_signing_algorithm_display() {
+        assert_eq!(SigningAlgorithm::Ed25519.to_string(), "ed25519");
+        assert_eq!(SigningAlgorithm::EcdsaP256.to_string(), "ecdsa-p256");
+        assert_eq!(SigningAlgorithm::EcdsaP384.to_string(), "ecdsa-p384");
+    }
+
+    #[test]
+    fn test_hardware_error_display() {
+        let err = HardwareError::NotAvailable("TPM not found".to_string());
+        assert!(err.to_string().contains("Hardware not available"));
+        assert!(err.to_string().contains("TPM not found"));
+
+        let err = HardwareError::VerificationFailed("bad signature".to_string());
+        assert!(err.to_string().contains("Verification failed"));
+
+        let err = HardwareError::UnsupportedAlgorithm(SigningAlgorithm::EcdsaP384);
+        assert!(err.to_string().contains("ecdsa-p384"));
+    }
 
     #[test]
     fn test_key_handle_creation() {
