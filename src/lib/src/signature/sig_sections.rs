@@ -12,6 +12,8 @@ pub const SIGNATURE_SECTION_DELIMITER_NAME: &str = "signature_delimiter";
 
 pub const MAX_HASHES: usize = 64;
 pub const MAX_SIGNATURES: usize = 256;
+/// Maximum certificates in a chain (typically: end-entity, intermediate(s), root)
+pub const MAX_CERTIFICATES: usize = 16;
 
 #[derive(PartialEq, Debug, Clone, Eq)]
 pub struct SignatureForHashes {
@@ -83,6 +85,13 @@ impl SignatureForHashes {
 
         // Deserialize certificate chain (optional, for backward compatibility)
         let certificate_chain = if let Ok(cert_count) = varint::get32(&mut reader) {
+            if cert_count as usize > MAX_CERTIFICATES {
+                debug!(
+                    "Too many certificates: {} (max: {})",
+                    cert_count, MAX_CERTIFICATES
+                );
+                return Err(WSError::TooManyCertificates(MAX_CERTIFICATES));
+            }
             if cert_count > 0 {
                 let mut certs = Vec::with_capacity(cert_count as usize);
                 for _ in 0..cert_count {
@@ -333,6 +342,44 @@ mod tests {
         let result = SignedHashes::deserialize(&buf);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), WSError::TooManySignatures(_)));
+    }
+
+    #[test]
+    fn test_signature_for_hashes_too_many_certificates() {
+        // Create a minimal valid signature, then add too many certificates
+        let mut buf = Vec::new();
+        varint::put(&mut buf, 0u64).unwrap(); // no key_id
+        buf.push(ED25519_PK_ID); // alg_id
+        varint::put_slice(&mut buf, &[1, 2, 3, 4]).unwrap(); // signature
+
+        // Add certificate count that exceeds MAX_CERTIFICATES
+        varint::put(&mut buf, (MAX_CERTIFICATES + 1) as u64).unwrap();
+
+        let result = SignatureForHashes::deserialize(&buf);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            WSError::TooManyCertificates(_)
+        ));
+    }
+
+    #[test]
+    fn test_signature_for_hashes_extreme_certificate_count() {
+        // Regression test for OOM vulnerability: crafted input claiming billions of certs
+        let mut buf = Vec::new();
+        varint::put(&mut buf, 0u64).unwrap(); // no key_id
+        buf.push(ED25519_PK_ID); // alg_id
+        varint::put_slice(&mut buf, &[1, 2, 3, 4]).unwrap(); // signature
+
+        // Craft a huge certificate count (what the fuzz crash did)
+        varint::put(&mut buf, 0xFFFF_FFFFu64).unwrap(); // ~4 billion certificates
+
+        let result = SignatureForHashes::deserialize(&buf);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            WSError::TooManyCertificates(_)
+        ));
     }
 
     #[test]

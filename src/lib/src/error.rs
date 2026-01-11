@@ -61,6 +61,9 @@ pub enum WSError {
     #[error("Too many signatures (max: {0})")]
     TooManySignatures(usize),
 
+    #[error("Too many certificates (max: {0})")]
+    TooManyCertificates(usize),
+
     #[error("Usage error: {0}")]
     UsageError(&'static str),
 
