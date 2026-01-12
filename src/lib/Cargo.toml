@@ -13,7 +13,7 @@ categories = ["cryptography", "wasm"]
 
 [dependencies]
 # Re-export attestation types from minimal crate
-wsc-attestation = { version = "0.4.1", path = "../attestation" }
+wsc-attestation = { version = "0.5.0", path = "../attestation" }
 anyhow = "1.0.100"
 ct-codecs = "1.1.6"
 ed25519-compact = { version = "2.1.1", features = ["pem"] }
