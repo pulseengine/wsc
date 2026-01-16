@@ -1,9 +1,8 @@
 /// Secure Element integration for embedded systems
 ///
-/// This module provides support for hardware secure elements commonly used in
-/// IoT and embedded systems:
+/// This module provides traits and types for hardware secure elements commonly
+/// used in IoT and embedded systems. Actual implementations are planned for:
 ///
-/// - **ATECC608**: Microchip CryptoAuthentication (I2C, cost-effective)
 /// - **SE050**: NXP EdgeLock (I2C/SPI, advanced features)
 /// - **OPTIGA**: Infineon Trust M (I2C, automotive-grade)
 ///
@@ -21,7 +20,6 @@
 /// Most secure elements use I2C or SPI protocols:
 /// - **I2C**: Most common, 100-400 kHz
 /// - **SPI**: Higher speed, less common
-/// - **UART**: Rare, legacy devices
 ///
 /// # Architecture
 ///
@@ -43,29 +41,14 @@
 /// - Keys can be locked (write-once, read-never)
 /// - Slot can require authentication
 ///
-/// # Example
+/// # Status
 ///
-/// ```ignore
-/// use wsc::platform::secure_element::{Atecc608Provider, KeySlot};
-///
-/// // Initialize secure element on I2C bus 1, address 0x60
-/// let se = Atecc608Provider::new("/dev/i2c-1", 0x60)?;
-///
-/// // Generate key in slot 0 (locked, never extractable)
-/// let handle = se.generate_in_slot(KeySlot(0), true)?;
-///
-/// // Sign data (operation happens IN secure element)
-/// let signature = se.sign(handle, data)?;
-///
-/// // Public key can be exported
-/// let public_key = se.get_public_key(handle)?;
-/// ```
+/// This module provides the trait infrastructure for secure element support.
+/// Concrete implementations require platform-specific I2C/SPI drivers and
+/// are planned for future releases.
 use crate::error::WSError;
 use crate::platform::{Attestation, KeyHandle, SecureKeyProvider, SecurityLevel};
 use crate::signature::PublicKey;
-
-#[cfg(feature = "atecc608")]
-pub mod atecc608;
 
 #[cfg(feature = "se050")]
 pub mod se050;
@@ -167,36 +150,18 @@ impl SecureElementProvider {
     /// # Returns
     ///
     /// Detected secure element provider, or error if none found
+    ///
+    /// # Status
+    ///
+    /// This function is a placeholder. Secure element support requires
+    /// platform-specific I2C drivers and is planned for future releases.
     pub fn auto_detect(_bus_path: &str) -> Result<Self, WSError> {
-        // Try common addresses in order of likelihood
-        // ATECC608: 0x60 (most common in IoT)
-        // SE050: 0x48 (NXP default)
-        // OPTIGA: 0x30 (Infineon default)
-
-        #[cfg(feature = "atecc608")]
-        {
-            // Try ATECC608 first (most common)
-            if let Ok(provider) = atecc608::Atecc608Provider::new(_bus_path, 0x60) {
-                return Ok(SecureElementProvider {
-                    inner: Box::new(provider),
-                    chip_type: ChipType::Atecc608,
-                });
-            }
-        }
-
-        // TODO(se050): Add SE050 detection when implemented
-        // #[cfg(feature = "se050")]
-        // {
-        //     if let Ok(provider) = se050::Se050Provider::new(_bus_path, 0x48) {
-        //         return Ok(SecureElementProvider {
-        //             inner: Box::new(provider),
-        //             chip_type: ChipType::Se050,
-        //         });
-        //     }
-        // }
+        // Secure element implementations planned:
+        // - SE050: 0x48 (NXP default)
+        // - OPTIGA: 0x30 (Infineon default)
 
         Err(WSError::HardwareError(
-            "No secure element detected on I2C bus".to_string(),
+            "Secure element support not yet implemented. See platform/secure_element/ for planned features.".to_string(),
         ))
     }
 
