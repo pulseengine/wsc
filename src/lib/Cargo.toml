@@ -68,12 +68,11 @@ wat = "1.221"
 default = ["software-keys"]
 # Software-based key storage (always available, for development/testing)
 software-keys = []
-# Hardware security backends (embedded/production)
-tpm2 = []  # TPM 2.0 support - will add tpm2-tss dependency
-secure-element = []  # Generic secure element support
-atecc608 = ["secure-element"]  # Microchip ATECC608 (I2C)
-se050 = ["secure-element"]  # NXP SE050 EdgeLock (I2C/SPI)
-trustzone = []  # ARM TrustZone / OP-TEE support
-sgx = []  # Intel SGX support
-# Alternative serialization formats (future feature)
-cbor = []  # CBOR serialization support
+# Hardware security backends (planned - traits available, implementations pending)
+tpm2 = []  # TPM 2.0 support (planned)
+secure-element = []  # Generic secure element support (planned)
+se050 = ["secure-element"]  # NXP SE050 EdgeLock (planned)
+trustzone = []  # ARM TrustZone / OP-TEE support (planned)
+sgx = []  # Intel SGX support (planned)
+# Alternative serialization formats (planned)
+cbor = []  # CBOR serialization support (planned)
