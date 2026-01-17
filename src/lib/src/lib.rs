@@ -44,6 +44,12 @@ pub mod provisioning;
 /// and SBOM standards.
 pub mod composition;
 
+/// Metrics collection for signing operations (Issue #3)
+///
+/// Provides observability for signing and validation operations with
+/// Prometheus-compatible export format.
+pub mod metrics;
+
 /// Air-gapped verification for embedded devices
 ///
 /// Enables offline verification of Sigstore keyless signatures using

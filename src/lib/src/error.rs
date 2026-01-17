@@ -76,6 +76,15 @@ pub enum WSError {
     #[error("Rekor error: {0}")]
     RekorError(String),
 
+    #[error("Rate limit exceeded for {service}: retry after {retry_after:?}")]
+    RateLimitExceeded {
+        service: String,
+        retry_after: std::time::Duration,
+    },
+
+    #[error("Rate limited by server: retry after {retry_after_secs} seconds")]
+    RateLimitedByServer { retry_after_secs: u64 },
+
     #[error("Certificate verification failed: {0}")]
     CertificateError(String),
 

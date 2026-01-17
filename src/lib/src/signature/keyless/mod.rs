@@ -3,6 +3,8 @@
 /// Provides defense-in-depth against CA compromise and MITM attacks.
 pub mod cert_pinning;
 pub mod cert_verifier;
+/// Rate limiting for Sigstore API endpoints (Issue #6)
+pub mod rate_limit;
 /// Keyless signing support for wsc
 ///
 /// This module implements keyless (ephemeral key) signing using:
