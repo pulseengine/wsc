@@ -112,16 +112,57 @@ pub struct TransparencyLogEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inclusion_proof: Option<InclusionProof>,
 
-    /// The Signed Entry Timestamp (SET).
+    /// The inclusion promise, carrying the Signed Entry Timestamp (SET).
+    ///
+    /// Per the Sigstore protobuf spec (and as real cosign output confirms), the
+    /// SET lives at `inclusionPromise.signedEntryTimestamp` — NOT as a
+    /// top-level field on the entry.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub signed_entry_timestamp: Option<String>,
+    pub inclusion_promise: Option<InclusionPromise>,
+
+    /// Legacy top-level SET emitted by wsc <= 0.11.0.
+    ///
+    /// Non-conformant: no other Sigstore implementation reads it. Accepted on
+    /// *deserialize* so bundles wsc emitted before this fix still round-trip,
+    /// but never serialized. Prefer [`Self::signed_entry_timestamp`].
+    #[serde(
+        rename = "signedEntryTimestamp",
+        skip_serializing,
+        default,
+        alias = "signed_entry_timestamp"
+    )]
+    pub legacy_signed_entry_timestamp: Option<String>,
+}
+
+impl TransparencyLogEntry {
+    /// The Signed Entry Timestamp, from the spec location, falling back to the
+    /// legacy top-level field for bundles wsc emitted before the fix.
+    pub fn signed_entry_timestamp(&self) -> Option<&str> {
+        self.inclusion_promise
+            .as_ref()
+            .map(|p| p.signed_entry_timestamp.as_str())
+            .or(self.legacy_signed_entry_timestamp.as_deref())
+    }
+}
+
+/// The inclusion promise: Rekor's signed statement that an entry was accepted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InclusionPromise {
+    /// The Signed Entry Timestamp (SET), base64-encoded.
+    pub signed_entry_timestamp: String,
 }
 
 /// Log instance identifier.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LogId {
-    /// The key ID of the log, hex-encoded.
+    /// The key ID of the log, **base64-encoded**.
+    ///
+    /// The Sigstore protobuf spec types this as a `bytes` field, and protobuf's
+    /// JSON mapping encodes `bytes` as base64 — which is what real cosign
+    /// emits. wsc's `RekorEntry::log_id` holds the same value hex-encoded (the
+    /// form the Rekor REST API uses), so the emitter transcodes hex -> base64.
     pub key_id: String,
 }
 
@@ -224,7 +265,15 @@ fn build_tlog_entry(
     TransparencyLogEntry {
         log_index: rekor.log_index.to_string(),
         log_id: LogId {
-            key_id: rekor.log_id.clone(),
+            // `RekorEntry::log_id` is hex (the Rekor REST form); the bundle
+            // spec's `LogId.key_id` is a protobuf `bytes` field, so its JSON
+            // mapping is base64 — what real cosign emits. Transcode. If the
+            // value is not valid hex it is not a Rekor log id we can transcode,
+            // so pass it through unchanged rather than silently emitting junk.
+            key_id: match hex::decode(&rekor.log_id) {
+                Ok(bytes) => BASE64.encode(&bytes),
+                Err(_) => rekor.log_id.clone(),
+            },
         },
         canonicalized_body: if rekor.body.is_empty() {
             None
@@ -233,11 +282,15 @@ fn build_tlog_entry(
         },
         integrated_time: integrated_time_str,
         inclusion_proof,
-        signed_entry_timestamp: if rekor.signed_entry_timestamp.is_empty() {
+        inclusion_promise: if rekor.signed_entry_timestamp.is_empty() {
             None
         } else {
-            Some(rekor.signed_entry_timestamp.clone())
+            Some(InclusionPromise {
+                signed_entry_timestamp: rekor.signed_entry_timestamp.clone(),
+            })
         },
+        // Never emitted; present only to accept pre-fix wsc bundles on read.
+        legacy_signed_entry_timestamp: None,
     }
 }
 
@@ -350,10 +403,19 @@ mod tests {
         let tlog = build_tlog_entry(&rekor);
 
         assert_eq!(tlog.log_index, "42");
-        assert_eq!(tlog.log_id.key_id, "c0d23d6ad406973f");
+        // The spec's LogId.key_id is a protobuf `bytes` field -> base64 in JSON
+        // (what real cosign emits). RekorEntry::log_id holds it as hex, so the
+        // emitter transcodes: hex "c0d23d6ad406973f" -> base64 "wNI9atQGlz8=".
+        assert_eq!(
+            tlog.log_id.key_id,
+            BASE64.encode(hex::decode("c0d23d6ad406973f").unwrap())
+        );
         assert_eq!(tlog.integrated_time, "1704067200");
         assert!(tlog.canonicalized_body.is_some());
-        assert!(tlog.signed_entry_timestamp.is_some());
+        // SET lives under inclusionPromise per the spec, not at the top level.
+        assert!(tlog.inclusion_promise.is_some());
+        assert!(tlog.signed_entry_timestamp().is_some());
+        assert!(tlog.legacy_signed_entry_timestamp.is_none());
 
         // Check inclusion proof was parsed
         let proof = tlog.inclusion_proof.unwrap();
@@ -376,7 +438,52 @@ mod tests {
         let mut rekor = create_test_rekor_entry();
         rekor.signed_entry_timestamp = String::new();
         let tlog = build_tlog_entry(&rekor);
-        assert!(tlog.signed_entry_timestamp.is_none());
+        assert!(tlog.inclusion_promise.is_none());
+        assert!(tlog.signed_entry_timestamp().is_none());
+    }
+
+    /// A `log_id` that is not valid hex is not a Rekor log id we can transcode
+    /// to the spec's base64 `bytes` form, so it is passed through unchanged
+    /// rather than emitting silently-mangled base64.
+    #[test]
+    fn test_tlog_entry_non_hex_log_id_passes_through() {
+        let mut rekor = create_test_rekor_entry();
+        rekor.log_id = "not-hex-at-all!!".to_string();
+        let tlog = build_tlog_entry(&rekor);
+        assert_eq!(
+            tlog.log_id.key_id, "not-hex-at-all!!",
+            "a non-hex log id must pass through verbatim, not be re-encoded"
+        );
+    }
+
+    /// Bundles wsc emitted at <= 0.11.0 carry the SET at the non-conformant
+    /// top-level `signedEntryTimestamp`. Those must still be readable.
+    #[test]
+    fn test_legacy_top_level_set_is_still_accepted_on_read() {
+        let json = br#"{
+            "mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+            "verificationMaterial": {
+                "x509CertificateChain": { "certificates": [] },
+                "tlogEntries": [{
+                    "logIndex": "42",
+                    "logId": { "keyId": "wNI9atQGlz8=" },
+                    "integratedTime": "1704067200",
+                    "signedEntryTimestamp": "bGVnYWN5U0VU"
+                }]
+            },
+            "messageSignature": {
+                "messageDigest": { "algorithm": "SHA2_256", "digest": "00" },
+                "signature": "AA=="
+            }
+        }"#;
+        let bundle = SigstoreBundle::from_json(json).expect("legacy shape must deserialize");
+        let tlog = &bundle.verification_material.tlog_entries[0];
+        assert_eq!(
+            tlog.signed_entry_timestamp(),
+            Some("bGVnYWN5U0VU"),
+            "the legacy top-level SET must still be readable"
+        );
+        assert!(tlog.inclusion_promise.is_none());
     }
 
     #[test]
